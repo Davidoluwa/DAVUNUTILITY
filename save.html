@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Retrieve FIFA Save - Thinkmate</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #2e2e2e;
+            color: #e0e0e0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            flex-direction: column;
+        }
+        input, button {
+            padding: 12px;
+            font-size: 16px;
+            margin: 8px 0;
+            border: none;
+            background-color: #424242;
+            color: #e0e0e0;
+            width: 100%;
+            max-width: 300px;
+            box-sizing: border-box;
+        }
+        input:focus {
+            outline: none;
+            box-shadow: 0 0 5px #64b5f6;
+        }
+        button {
+            background-color: #1976d2;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #1565c0;
+        }
+        #authSection, #downloadSection {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background-color: #333333;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.5);
+        }
+        #errorMessage {
+            font-size: 18px;
+            color: #ef5350;
+            display: none;
+            padding: 20px;
+            background-color: #333333;
+            border-radius: 12px;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.5);
+        }
+        a {
+            color: #64b5f6;
+            text-decoration: none;
+        }
+        a:hover {
+            text-decoration: underline;
+        }
+        #downloadSection {
+            display: none;
+        }
+        #downloadBtn {
+            background-color: #ffffff;
+            color: #333333;
+        }
+        #downloadBtn:hover {
+            background-color: #e0e0e0;
+        }
+        #logoutBtn {
+            background-color: #808080;
+        }
+        #logoutBtn:hover {
+            background-color: #666666;
+        }
+    </style>
+</head>
+<body>
+    <div id="authSection">
+        <input type="email" id="email" placeholder="Enter your email">
+        <input type="password" id="password" placeholder="Enter your password">
+        <button id="loginBtn">Login</button>
+        <p>New user? <a href="https://Davidoluwa.github.io/register.html">Register here</a></p>
+    </div>
+    <div id="downloadSection">
+        <p>Your save file is ready!</p>
+        <button id="downloadBtn" onclick="downloadLuaFile()">Download Save.lua</button>
+        <button id="logoutBtn" onclick="logout()">Log Out</button>
+    </div>
+    <div id="errorMessage">Login Failed</div>
+
+    <!-- Firebase v8 SDKs -->
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-auth.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-firestore.js"></script>
+
+    <script>
+        const firebaseConfig = {
+            apiKey: "AIzaSyAYF88RuhWLgKXUC1nePFOLdBv3WS-nYNY",
+            authDomain: "fifa-davun-utility.firebaseapp.com",
+            projectId: "fifa-davun-utility",
+            storageBucket: "fifa-davun-utility.appspot.com",
+            messagingSenderId: "285918417550",
+            appId: "1:285918417550:web:005acea2b83881d8cc2fdf",
+            measurementId: "G-TPD462ZGCB"
+        };
+
+        firebase.initializeApp(firebaseConfig);
+        const auth = firebase.auth();
+        const db = firebase.firestore();
+
+        let saveCode = "";
+
+        document.addEventListener("DOMContentLoaded", function() {
+            const loginBtn = document.getElementById("loginBtn");
+            const emailInput = document.getElementById("email");
+            const passwordInput = document.getElementById("password");
+            const authSection = document.getElementById("authSection");
+            const downloadSection = document.getElementById("downloadSection");
+            const errorMessage = document.getElementById("errorMessage");
+
+            loginBtn.addEventListener("click", function() {
+                const email = emailInput.value.trim();
+                const password = passwordInput.value.trim();
+                if (!email || !password) {
+                    showError("Please enter both email and password.");
+                    return;
+                }
+
+                auth.signInWithEmailAndPassword(email, password)
+                    .then(userCredential => {
+                        fetchSaveCode(userCredential.user.uid);
+                    })
+                    .catch(err => showError("Failed to sign in: " + err.message));
+            });
+
+            auth.onAuthStateChanged(user => {
+                if (user) {
+                    fetchSaveCode(user.uid);
+                } else {
+                    authSection.style.display = "flex";
+                    downloadSection.style.display = "none";
+                    errorMessage.style.display = "none";
+                }
+            });
+
+            function fetchSaveCode(uid) {
+                db.collection("users").doc(uid).get()
+                    .then(doc => {
+                        if (doc.exists && doc.data().lastSaveCode) {
+                            saveCode = doc.data().lastSaveCode.replace("saveCode=", "");
+                            authSection.style.display = "none";
+                            downloadSection.style.display = "flex";
+                            errorMessage.style.display = "none";
+                        } else {
+                            showError("No save code found for this user.");
+                        }
+                    })
+                    .catch(err => showError("Error fetching save code: " + err.message));
+            }
+
+            function generateObfuscatedLuaScript(rawCode) {
+                // Parse the Firebase data (mirroring Kotlin logic)
+                const teamIdMatch = (rawCode.match(/mt(\d+)/) || [])[1] || "1";
+                const dateMatch = (rawCode.match(/date(\d{2}\/\d{2}\/\d{2})/) || [])[1] || "02/01/25";
+                const matchupCountMatch = (rawCode.match(/mc(\d+)/) || [])[1] || "20";
+                const fixturesMatch = (rawCode.match(/fixtures([a-zA-Z]+)(?=results|$)/) || [])[1] || "";
+                const resultsMatch = (rawCode.match(/results([a-zA-Z*]+?)(?=players|$)/) || [])[1] || "";
+                const playersMatch = (rawCode.match(/players([0-9,]+)/) || [])[1] || "";
+                const teams = (rawCode.match(/teams([0-9,]+)/) || [])[1] || "";
+                const formationMatch = (rawCode.match(/Formation(\d+)/) || [])[1] || "0";
+                const goalsMatch = (rawCode.match(/goals([0-9:;]+)/) || [])[1] || "";
+
+                // Parse goals
+                const goalsEntries = goalsMatch.split(";")
+                    .filter(entry => entry)
+                    .map(entry => {
+                        const [id, value] = entry.split(":").map(part => part.trim());
+                        return `    [${id}] = ${value}`;
+                    })
+                    .join(",\n");
+
+                // Original readable Lua script
+                const originalScript = `
+-- DAVUNPES SAVE --
+
+return {
+    GLOBAL_MATCHUP_COUNT = ${matchupCountMatch},
+    GLOBAL_DATE_PLACEHOLDER = "${dateMatch}",
+    GOALS = {
+${goalsEntries}
+    },
+    selTeamFORMID = ${formationMatch},
+    currentSelectedTeamID = ${teamIdMatch},
+    fixtureCode = "${fixturesMatch}",
+    scoreCode = "${resultsMatch}",
+    TeamList = {${teams}},
+    Players = {${playersMatch}}
+}
+                `.trim();
+
+                // Obfuscate by encoding the script (Base64)
+                const encodedScript = btoa(originalScript);
+
+                // Return script with loader that decodes and executes at runtime
+                return `
+-- Obfuscated DAVUNPES SAVE --
+sv = loadstring(dC("${encodedScript}"))()
+return sv
+                `.trim();
+            }
+
+            window.downloadLuaFile = function() {
+                if (!saveCode) {
+                    showError("No save code available to generate script.");
+                    return;
+                }
+                const luaContent = generateObfuscatedLuaScript(saveCode);
+                const blob = new Blob([luaContent], { type: "text/plain" });
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = "Save.lua";
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                window.URL.revokeObjectURL(url);
+            };
+
+            window.logout = function() {
+                auth.signOut().then(() => {
+                    authSection.style.display = "flex";
+                    downloadSection.style.display = "none";
+                    errorMessage.style.display = "none";
+                    saveCode = "";
+                }).catch(err => showError("Logout failed: " + err.message));
+            };
+
+            function showError(message) {
+                errorMessage.textContent = message;
+                errorMessage.style.display = "block";
+                authSection.style.display = "flex";
+                downloadSection.style.display = "none";
+            }
+        });
+    </script>
+</body>
+</html>
