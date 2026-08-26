@@ -1,0 +1,96 @@
+name: Persist FIFA16 Alphatrix OBB
+
+on:
+  push:
+    paths:
+      - '.github/workflows/persist_fifa16_obb.yml'
+      - 'fifa16_obb_trigger.txt'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  persist:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Resolve exact MediaFire payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          PAGE='https://www.mediafire.com/file/ycxkoqne89x35zh/FIFA_16_OBB_BY_ALPHATRIX_GAMING.zip/file#'
+          python3 - <<'PY'
+          import html,re,requests
+          page='https://www.mediafire.com/file/ycxkoqne89x35zh/FIFA_16_OBB_BY_ALPHATRIX_GAMING.zip/file#'
+          r=requests.get(page,timeout=60,headers={'User-Agent':'Mozilla/5.0'})
+          r.raise_for_status()
+          text=html.unescape(r.text)
+          pats=[
+            r'href="(https://download[^\"]+/ycxkoqne89x35zh/[^\"]+)"',
+            r'(https://download\d+\.mediafire\.com/[^\"\']+/ycxkoqne89x35zh/[^\"\']+\.zip)'
+          ]
+          url=None
+          for p in pats:
+            m=re.search(p,text)
+            if m:
+              url=m.group(1)
+              break
+          if not url:
+            open('mediafire_page.html','w').write(text)
+            raise SystemExit('Could not resolve MediaFire direct URL')
+          print(url)
+          open('direct_url.txt','w').write(url)
+          PY
+
+      - name: Download exact ZIP and verify provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL="$(cat direct_url.txt)"
+          curl -fL --retry 8 --retry-all-errors --connect-timeout 30 --max-time 7200 -A 'Mozilla/5.0' "$URL" -o FIFA_16_OBB_BY_ALPHATRIX_GAMING.zip
+          ACTUAL=$(sha256sum FIFA_16_OBB_BY_ALPHATRIX_GAMING.zip | awk '{print $1}')
+          EXPECTED='7bd9d0bd7018dc1a1642d0f24198c9a6e7a222ff0f96d8ea1a9181411afa5c5f'
+          echo "archive_sha256=$ACTUAL"
+          test "$ACTUAL" = "$EXPECTED"
+          test "$(stat -c%s FIFA_16_OBB_BY_ALPHATRIX_GAMING.zip)" = '1408809061'
+          unzip -t FIFA_16_OBB_BY_ALPHATRIX_GAMING.zip >/dev/null
+
+      - name: Extract full OBB set
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p extracted
+          unzip -j FIFA_16_OBB_BY_ALPHATRIX_GAMING.zip \
+            'OBB/com.ea.gp.fifaworld/main.13.com.ea.gp.fifaworld.obb' \
+            'OBB/com.ea.gp.fifaworld/patch.26.com.ea.gp.fifaworld.obb' \
+            -d extracted
+          MAIN=extracted/main.13.com.ea.gp.fifaworld.obb
+          PATCH=extracted/patch.26.com.ea.gp.fifaworld.obb
+          test "$(stat -c%s "$MAIN")" = '1376082760'
+          test "$(stat -c%s "$PATCH")" = '102869675'
+          {
+            echo 'Source: https://www.mediafire.com/file/ycxkoqne89x35zh/FIFA_16_OBB_BY_ALPHATRIX_GAMING.zip/file#'
+            echo 'ZIP bytes: 1408809061'
+            echo 'ZIP SHA256: 7bd9d0bd7018dc1a1642d0f24198c9a6e7a222ff0f96d8ea1a9181411afa5c5f'
+            echo
+            sha256sum "$MAIN" "$PATCH"
+            echo
+            stat -c '%n %s bytes' "$MAIN" "$PATCH"
+          } > extracted/PROVENANCE_SHA256.txt
+          cat extracted/PROVENANCE_SHA256.txt
+
+      - name: Publish exact OBBs as temporary release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG='fifa16-alphatrix-obb-20260826'
+          gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag 2>/dev/null || true
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title 'FIFA16 Alphatrix exact OBB persistence' --notes 'Exact OBBs extracted from the user-supplied MediaFire ZIP after SHA-256 verification.'
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" \
+            extracted/main.13.com.ea.gp.fifaworld.obb \
+            extracted/patch.26.com.ea.gp.fifaworld.obb \
+            extracted/PROVENANCE_SHA256.txt \
+            --clobber
