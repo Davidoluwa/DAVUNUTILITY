@@ -1,0 +1,118 @@
+name: FIFA16 MediaFire Player Slice
+on:
+  push:
+    paths:
+      - '.github/workflows/fifa16_mediafire_slice.yml'
+      - 'fifa16_mediafire_trigger.txt'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  slice:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resolve MediaFire direct link
+        shell: bash
+        run: |
+          set -euo pipefail
+          PAGE='https://www.mediafire.com/file/ycxkoqne89x35zh/FIFA_16_OBB_BY_ALPHATRIX_GAMING.zip/file'
+          curl -fL --retry 5 --retry-all-errors -A 'Mozilla/5.0' "$PAGE" -o /tmp/mediafire.html
+          python3 - <<'PY'
+          import html,re
+          s=open('/tmp/mediafire.html',encoding='utf-8',errors='ignore').read()
+          pats=[
+            r'id="downloadButton"[^>]+href="([^"]+)"',
+            r'href="(https?://download[^\"]+FIFA_16_OBB_BY_ALPHATRIX_GAMING\.zip[^\"]*)"',
+            r'href="(https?://[^\"]*mediafire[^\"]*/[^\"]*FIFA_16_OBB_BY_ALPHATRIX_GAMING\.zip[^\"]*)"'
+          ]
+          for p in pats:
+              m=re.search(p,s,re.I)
+              if m:
+                  u=html.unescape(m.group(1))
+                  open('/tmp/direct_url.txt','w').write(u)
+                  print(u)
+                  break
+          else:
+              raise SystemExit('Could not resolve MediaFire direct link')
+          PY
+      - name: Download exact archive and verify
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL="$(cat /tmp/direct_url.txt)"
+          curl -fL --retry 8 --retry-all-errors -A 'Mozilla/5.0' "$URL" -o /tmp/FIFA16.zip
+          echo '7bd9d0bd7018dc1a1642d0f24198c9a6e7a222ff0f96d8ea1a9181411afa5c5f  /tmp/FIFA16.zip' | sha256sum -c -
+          test "$(stat -c%s /tmp/FIFA16.zip)" -eq 1408809061
+      - name: Extract main OBB only
+        shell: bash
+        run: |
+          set -euo pipefail
+          unzip -p /tmp/FIFA16.zip 'OBB/com.ea.gp.fifaworld/main.13.com.ea.gp.fifaworld.obb' > /tmp/main.obb
+          test "$(stat -c%s /tmp/main.obb)" -eq 1376082760
+      - name: Slice exact licensed-player assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf fifa16_player_slices
+          mkdir -p fifa16_player_slices
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib, json
+          obb=Path('/tmp/main.obb')
+          targets=[
+            # name, offset, size, sha256
+            ('face_186627_0_0_0_0_0_0_0_0_textures.rx3',367323840,22677,'6db5ce95ea45046ed83cb2488923de7318707e8e8adebedad65d4d6597c44bdb'),
+            ('hair_186627_0_0.rx3',489553728,30405,'9210d7988c3f9636df9ce731a2c593877f025d043d19f553572a5e0fe7cae9fc'),
+            ('hair_186627_0_textures.rx3',489584192,82929,'8930cb86ad24fbc32fcf841ca3ea0d83b996599da34048aea518df79dc90e9f6'),
+            ('hairlod_186627_0_0.rx3',596214720,17788,'03a3d6a1498b62347450e98b6dd09110e2354a0ce24d22cb82dc69c25b7f75e9'),
+            ('head_186627_0.rx3',655311936,87214,'195ead2bf97ad56e534a2291c93a47e629a92883d6f1ad16c8abbbbb5bb5dca6'),
+            ('face_20801_0_0_0_0_0_0_0_0_textures.rx3',376211072,30392,'ab9632ed4bee2417cd34652ee36c401eb37745a92fb16445b9fca056bbba452f'),
+            ('hair_20801_0_0.rx3',547816576,89221,'3c267d55ddb56191633f04d972914a06368b90b0a1fc2fd99aa34027539ca12c'),
+            ('hair_20801_0_textures.rx3',547905856,143431,'12deb229e97fcd232a94fcfdad7ee13e4310acdca8261ae60e164f5195d5e5e0'),
+            ('hairlod_20801_0_0.rx3',600112512,12729,'191f594f47dc33cb491c24e8de503bceabee1f7b1111bbe89ecddea4c6318377'),
+            ('head_20801_0.rx3',684585216,87614,'95663ec75a21b597f6dd2f50099a84a71c898753d4ffd45d94b248ca3899477a'),
+          ]
+          out=Path('fifa16_player_slices')
+          manifest=[]
+          with obb.open('rb') as f:
+              for name,off,size,want in targets:
+                  f.seek(off); data=f.read(size)
+                  got=hashlib.sha256(data).hexdigest()
+                  print(name,len(data),got)
+                  if len(data)!=size or got!=want:
+                      raise SystemExit(f'mismatch for {name}: len={len(data)} sha={got}')
+                  (out/name).write_bytes(data)
+                  manifest.append(dict(name=name,offset=off,size=size,sha256=got,magic=data[:16].hex()))
+          (out/'manifest.json').write_text(json.dumps(manifest,indent=2))
+          PY
+      - name: Encode slices for deterministic connector retrieval
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf fifa16_player_slices_b64
+          mkdir fifa16_player_slices_b64
+          for f in fifa16_player_slices/*.rx3; do
+            base64 -w 76 "$f" > "fifa16_player_slices_b64/$(basename "$f").b64"
+          done
+          cp fifa16_player_slices/manifest.json fifa16_player_slices_b64/
+      - name: Commit encoded slices to repo
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf generated/fifa16_player_slices_b64
+          mkdir -p generated
+          cp -r fifa16_player_slices_b64 generated/fifa16_player_slices_b64
+          git config user.name 'fifa16-research-bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add generated/fifa16_player_slices_b64
+          git commit -m 'Add verified FIFA16 Ronaldo and Balotelli player slices' || true
+          git push
+      - name: Upload raw slices artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fifa16-player-slices
+          path: fifa16_player_slices/
+          compression-level: 0
+          retention-days: 7
