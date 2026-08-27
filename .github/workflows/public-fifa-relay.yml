@@ -7,7 +7,8 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
+  actions: write
 
 jobs:
   relay:
@@ -15,6 +16,19 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
+
+      - name: Free repository artifact storage
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100" --jq '.artifacts[].id' > /tmp/artifact_ids.txt || true
+          while read -r id; do
+            [ -z "$id" ] && continue
+            gh api -X DELETE "repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}" || true
+          done < /tmp/artifact_ids.txt
+
       - name: Resolve MediaFire and download verified ZIP
         shell: bash
         run: |
@@ -31,15 +45,20 @@ jobs:
           curl --fail --location --retry 8 --retry-all-errors --connect-timeout 30 --user-agent 'Mozilla/5.0' "$(cat direct_url.txt)" -o fifa16.zip
           test "$(stat -c%s fifa16.zip)" -eq 1408809061
           echo '7bd9d0bd7018dc1a1642d0f24198c9a6e7a222ff0f96d8ea1a9181411afa5c5f  fifa16.zip' | sha256sum -c -
-      - name: Build tiny transfer probe
+
+      - name: Build 64 MiB binary transfer chunk
         shell: bash
         run: |
-          head -c 4194304 fifa16.zip | base64 -w76 > fifa16-part-00-probe.b64.txt
-      - name: Upload tiny transfer artifact
+          set -euo pipefail
+          dd if=fifa16.zip of=fifa16.zip.part.00 bs=1M count=64 status=none
+          sha256sum fifa16.zip.part.00
+          stat -c '%s bytes' fifa16.zip.part.00
+
+      - name: Upload transfer artifact
         uses: actions/upload-artifact@v4
         with:
-          name: fifa16-transfer-probe
-          path: fifa16-part-00-probe.b64.txt
+          name: fifa16-transfer-part-00
+          path: fifa16.zip.part.00
           compression-level: 0
           retention-days: 1
           if-no-files-found: error
