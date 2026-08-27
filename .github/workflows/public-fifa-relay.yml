@@ -31,18 +31,15 @@ jobs:
           curl --fail --location --retry 8 --retry-all-errors --connect-timeout 30 --user-agent 'Mozilla/5.0' "$(cat direct_url.txt)" -o fifa16.zip
           test "$(stat -c%s fifa16.zip)" -eq 1408809061
           echo '7bd9d0bd7018dc1a1642d0f24198c9a6e7a222ff0f96d8ea1a9181411afa5c5f  fifa16.zip' | sha256sum -c -
-      - name: Publish base64 text probe
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Build tiny transfer probe
         shell: bash
         run: |
-          set -euo pipefail
-          TAG='fifa16-obb-relay-temp'
-          OUT='fifa16-part-00-probe.b64.txt'
-          head -c 4194304 fifa16.zip | base64 -w76 > "$OUT"
-          if ! gh release view "$TAG" >/dev/null 2>&1; then
-            gh release create "$TAG" --target main --title 'Temporary FIFA 16 OBB relay' --notes 'Temporary mirror of the already-public MediaFire source for sandbox transfer.' --prerelease
-          fi
-          gh release delete-asset "$TAG" "$OUT" -y >/dev/null 2>&1 || true
-          gh release upload "$TAG" "$OUT" --clobber
-          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" --jq '.assets[] | select(.name == "fifa16-part-00-probe.b64.txt") | {name,size,content_type,browser_download_url}'
+          head -c 4194304 fifa16.zip | base64 -w76 > fifa16-part-00-probe.b64.txt
+      - name: Upload tiny transfer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fifa16-transfer-probe
+          path: fifa16-part-00-probe.b64.txt
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
