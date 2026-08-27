@@ -1,0 +1,49 @@
+name: Public FIFA OBB Relay
+
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/public-fifa-relay.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  relay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resolve MediaFire and download verified ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' > direct_url.txt
+          import html, re, urllib.request
+          page='https://www.mediafire.com/file/ycxkoqne89x35zh/FIFA_16_OBB_BY_ALPHATRIX_GAMING.zip/file'
+          req=urllib.request.Request(page, headers={'User-Agent':'Mozilla/5.0'})
+          text=urllib.request.urlopen(req, timeout=45).read().decode('utf-8','ignore')
+          m=re.search(r'href=["\'](https://download\d+\.mediafire\.com/[^"\']+)["\']', text)
+          if not m: raise SystemExit('direct URL not found')
+          print(html.unescape(m.group(1)))
+          PY
+          curl --fail --location --retry 8 --retry-all-errors --connect-timeout 30 --user-agent 'Mozilla/5.0' "$(cat direct_url.txt)" -o FIFA_16_OBB_BY_ALPHATRIX_GAMING.zip
+          test "$(stat -c%s FIFA_16_OBB_BY_ALPHATRIX_GAMING.zip)" -eq 1408809061
+          echo '7bd9d0bd7018dc1a1642d0f24198c9a6e7a222ff0f96d8ea1a9181411afa5c5f  FIFA_16_OBB_BY_ALPHATRIX_GAMING.zip' | sha256sum -c -
+          unzip -tq FIFA_16_OBB_BY_ALPHATRIX_GAMING.zip >/dev/null
+      - name: Publish temporary public release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG='fifa16-obb-relay-temp'
+          ASSET='FIFA_16_OBB_BY_ALPHATRIX_GAMING.zip'
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --target main --title 'Temporary FIFA 16 OBB relay' --notes 'Temporary mirror of the already-public MediaFire source for sandbox transfer.' --prerelease
+          fi
+          gh release delete-asset "$TAG" "$ASSET" -y >/dev/null 2>&1 || true
+          gh release upload "$TAG" "$ASSET" --clobber
+          echo "RELEASE_URL=https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}"
+          echo "ASSET_URL=https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${ASSET}"
