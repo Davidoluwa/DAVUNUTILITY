@@ -3,7 +3,9 @@ name: Public FIFA OBB Relay
 on:
   push:
     branches: [main]
-    paths: ['.github/workflows/public-fifa-relay.yml']
+    paths:
+      - '.github/workflows/public-fifa-relay.yml'
+      - '.github/fifa-offset.txt'
   workflow_dispatch:
 
 permissions:
@@ -16,6 +18,16 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
+
+      - name: Read transfer offset
+        id: cfg
+        shell: bash
+        run: |
+          set -euo pipefail
+          START=$(tr -dc '0-9' < .github/fifa-offset.txt)
+          test -n "$START"
+          echo "start=$START" >> "$GITHUB_OUTPUT"
+          echo "name=fifa16-transfer-offset-${START}" >> "$GITHUB_OUTPUT"
 
       - name: Free repository artifact storage
         env:
@@ -46,19 +58,23 @@ jobs:
           test "$(stat -c%s fifa16.zip)" -eq 1408809061
           echo '7bd9d0bd7018dc1a1642d0f24198c9a6e7a222ff0f96d8ea1a9181411afa5c5f  fifa16.zip' | sha256sum -c -
 
-      - name: Build 192 MiB binary transfer chunk
+      - name: Build transfer chunk
         shell: bash
         run: |
           set -euo pipefail
-          dd if=fifa16.zip of=fifa16.zip.part.01 bs=1M skip=64 count=192 status=none
-          sha256sum fifa16.zip.part.01
-          stat -c '%s bytes' fifa16.zip.part.01
+          START=${{ steps.cfg.outputs.start }}
+          TOTAL=$(stat -c%s fifa16.zip)
+          OFFSET=$((START * 1024 * 1024))
+          test "$OFFSET" -lt "$TOTAL"
+          dd if=fifa16.zip of=fifa16.chunk bs=1M skip="$START" count=192 status=none
+          sha256sum fifa16.chunk
+          stat -c '%s bytes' fifa16.chunk
 
       - name: Upload transfer artifact
         uses: actions/upload-artifact@v4
         with:
-          name: fifa16-transfer-part-01
-          path: fifa16.zip.part.01
+          name: ${{ steps.cfg.outputs.name }}
+          path: fifa16.chunk
           compression-level: 0
           retention-days: 1
           if-no-files-found: error
