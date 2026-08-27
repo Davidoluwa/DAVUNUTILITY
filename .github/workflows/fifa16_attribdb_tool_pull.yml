@@ -1,0 +1,26 @@
+name: FIFA16 AttribDB Tool Pull
+on:
+  push:
+    paths:
+      - '.github/workflows/fifa16_attribdb_tool_pull.yml'
+permissions:
+  contents: read
+jobs:
+  pull:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download public AttribDB editor release
+        run: |
+          set -euo pipefail
+          curl -fL --retry 5 --retry-all-errors \
+            -o FIFA-16-AttribDB-Editor-v2.5.0.zip \
+            https://github.com/citizenkidd/fifa16-attribdb-editor/releases/download/v2.5.0/FIFA-16-AttribDB-Editor-v2.5.0.zip
+          echo '02f503739ddb9d5b212a78c594498a8a3e3b85dcfa6cd166db9515d3266d9c03  FIFA-16-AttribDB-Editor-v2.5.0.zip' | sha256sum -c -
+          unzip -l FIFA-16-AttribDB-Editor-v2.5.0.zip | head -80
+      - name: Upload tool
+        uses: actions/upload-artifact@v4
+        with:
+          name: fifa16-attribdb-editor-v250
+          path: FIFA-16-AttribDB-Editor-v2.5.0.zip
+          compression-level: 0
+          retention-days: 1
