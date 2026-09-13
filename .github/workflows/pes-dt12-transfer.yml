@@ -16,104 +16,95 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install extraction and browser tools
+      - name: Install tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y p7zip-full unar
+          sudo apt-get install -y p7zip-full unar aria2
           npm init -y >/dev/null 2>&1
           npm install playwright@1.55.0
-          npx playwright install chromium --with-deps
 
-      - name: Resolve Flashbang download and fetch archive
+      - name: Fetch official MegaPatch torrent from GoFile
         run: |
-          cat > fetch-dt12.js <<'JS'
+          cat > gofile.js <<'JS'
           const { chromium } = require('playwright');
           const fs = require('fs');
+          (async () => {
+            const browser = await chromium.launch({headless:true, executablePath:'/usr/bin/google-chrome', args:['--no-sandbox']});
+            const context = await browser.newContext({acceptDownloads:true});
+            const page = await context.newPage();
+            page.on('response', r => {
+              const u=r.url();
+              if (/gofile|download/i.test(u)) console.log('RESP', r.status(), u);
+            });
+            await page.goto('https://gofile.io/d/2vvcpf', {waitUntil:'domcontentloaded', timeout:60000});
+            await page.waitForTimeout(8000);
+            console.log('TITLE', await page.title());
+            console.log('TEXT', (await page.locator('body').innerText()).slice(0,12000));
+            const entries = await page.locator('a,button').evaluateAll(els => els.map((e,i)=>({i,tag:e.tagName,text:(e.innerText||e.textContent||'').trim(),href:e.href||'',title:e.getAttribute('title')||'',aria:e.getAttribute('aria-label')||''})));
+            console.log('ENTRIES', JSON.stringify(entries,null,2));
 
-          async function tryDownload(page, locator, out) {
-            try {
-              const p = page.waitForEvent('download', { timeout: 20000 });
-              await locator.click({ timeout: 10000 });
-              const d = await p;
-              console.log('DOWNLOAD:', d.suggestedFilename());
-              await d.saveAs(out);
-              return true;
-            } catch (e) {
-              console.log('download attempt failed:', String(e));
-              return false;
-            }
-          }
-
-          (async() => {
-            const browser = await chromium.launch({ headless: true });
-            const context = await browser.newContext({ acceptDownloads: true });
-            let page = await context.newPage();
-            const url = 'https://flashbang.sh/f/GSUgLG-0oAA';
-            await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
-            await page.waitForTimeout(2500);
-            console.log('TITLE:', await page.title());
-
-            const entries = await page.locator('a,button').evaluateAll(els => els.map(e => ({
-              tag:e.tagName,
-              text:(e.innerText||e.textContent||'').trim(),
-              href:e.href||'',
-              download:e.getAttribute('download')||''
-            })));
-            console.log('LINKS/BUTTONS', JSON.stringify(entries, null, 2));
-
-            let saved = false;
-            for (let attempt = 0; attempt < 5 && !saved; attempt++) {
-              const pages = context.pages();
-              page = pages[0] || page;
-              for (const extra of pages.slice(1)) {
-                try { await extra.close(); } catch {}
-              }
-
-              const candidates = page.locator('a,button').filter({ hasText: /download/i });
-              const n = await candidates.count();
-              console.log('attempt', attempt, 'download candidates', n);
-              for (let i = 0; i < n && !saved; i++) {
-                saved = await tryDownload(page, candidates.nth(i), '/tmp/update.rar');
-                if (!saved) {
-                  await page.waitForTimeout(1200);
-                }
-              }
-              if (!saved) {
-                try { await page.reload({ waitUntil:'domcontentloaded', timeout:60000 }); } catch {}
-                await page.waitForTimeout(1800);
-              }
+            let done=false;
+            const direct=entries.find(e => /\.torrent($|\?)/i.test(e.href));
+            if (direct) {
+              console.log('DIRECT TORRENT', direct.href);
+              const resp=await context.request.get(direct.href, {timeout:60000});
+              if (resp.ok()) { fs.writeFileSync('/tmp/update.torrent', await resp.body()); done=true; }
             }
 
-            if (!saved) {
-              const hrefs = await page.locator('a').evaluateAll(as => as.map(a => a.href).filter(Boolean));
-              console.log('FINAL HREFS', JSON.stringify(hrefs, null, 2));
-              fs.writeFileSync('/tmp/page.html', await page.content());
-
-              // Try direct-looking URLs discovered in the DOM.
-              const direct = hrefs.find(h => /\.rar($|\?)/i.test(h) || /download|\/dl\//i.test(h));
-              if (direct) {
-                console.log('DIRECT CANDIDATE', direct);
-                const r = await context.request.get(direct, { timeout: 120000 });
-                console.log('DIRECT STATUS', r.status(), r.headers());
-                if (r.ok()) {
-                  fs.writeFileSync('/tmp/update.rar', await r.body());
-                  saved = true;
+            if (!done) {
+              const torrentText=page.getByText(/\.torrent/i).first();
+              if (await torrentText.count()) {
+                console.log('FOUND TORRENT TEXT', await torrentText.innerText());
+                const row=torrentText.locator('xpath=ancestor::*[self::tr or @role="row" or contains(@class,"file")][1]');
+                let root=(await row.count())?row:torrentText.locator('xpath=..');
+                const buttons=root.locator('a,button');
+                const n=await buttons.count();
+                for(let i=0;i<n && !done;i++) {
+                  try {
+                    const p=page.waitForEvent('download',{timeout:12000});
+                    await buttons.nth(i).click({timeout:5000});
+                    const d=await p;
+                    console.log('TORRENT DOWNLOAD',d.suggestedFilename());
+                    await d.saveAs('/tmp/update.torrent'); done=true;
+                  } catch(e) { console.log('torrent click failed',i,String(e)); }
                 }
               }
             }
 
-            if (!saved || !fs.existsSync('/tmp/update.rar')) {
-              throw new Error('Could not trigger or resolve the archive download');
+            if (!done) {
+              const downloads=page.locator('a,button').filter({hasText:/download/i});
+              const n=await downloads.count();
+              for(let i=0;i<n && !done;i++) {
+                try {
+                  const p=page.waitForEvent('download',{timeout:12000});
+                  await downloads.nth(i).click({timeout:5000});
+                  const d=await p;
+                  console.log('GENERIC DOWNLOAD',d.suggestedFilename());
+                  await d.saveAs('/tmp/update.torrent'); done=true;
+                } catch(e) { console.log('download click failed',i,String(e)); }
+              }
             }
-
             await browser.close();
-          })().catch(e => { console.error(e); process.exit(1); });
+            if(!done) throw new Error('Could not obtain GoFile torrent');
+          })().catch(e=>{console.error(e);process.exit(1)});
           JS
-          node ./fetch-dt12.js
-          ls -lh /tmp/update.rar
-          stat -c 'ARCHIVE_BYTES=%s' /tmp/update.rar
+          node gofile.js
+          file /tmp/update.torrent
+          ls -lh /tmp/update.torrent
+          head -c 20 /tmp/update.torrent | xxd
 
-      - name: Inspect archive and extract dt12_g4.cpk
+      - name: Download archive via torrent
+        run: |
+          mkdir -p /tmp/torrent
+          aria2c --seed-time=0 --file-allocation=none --dir=/tmp/torrent --summary-interval=20 --console-log-level=notice /tmp/update.torrent
+          find /tmp/torrent -maxdepth 3 -type f -printf '%s %p\n' | sort -nr | tee /tmp/torrent-files.txt
+          RAR=$(find /tmp/torrent -type f \( -iname '*.rar' -o -iname '*.7z' -o -iname '*.zip' \) -printf '%s %p\n' | sort -nr | head -1 | cut -d' ' -f2-)
+          test -n "$RAR"
+          cp "$RAR" /tmp/update.rar
+          stat -c 'ARCHIVE_BYTES=%s' /tmp/update.rar | tee /tmp/archive-info.txt
+          sha256sum /tmp/update.rar | tee -a /tmp/archive-info.txt
+
+      - name: Extract dt12_g4.cpk
         run: |
           7z l /tmp/update.rar | tee /tmp/archive-list.txt
           mkdir -p /tmp/dt12
@@ -135,76 +126,38 @@ jobs:
           path: |
             /tmp/cpk-info.txt
             /tmp/chunk-sha256.txt
+            /tmp/archive-info.txt
             /tmp/archive-list.txt
+            /tmp/torrent-files.txt
           compression-level: 9
 
       - name: Upload part 00
         uses: actions/upload-artifact@v4
-        with:
-          name: dt12-part00
-          path: /tmp/chunks/dt12_g4.cpk.part00
-          compression-level: 0
-          if-no-files-found: ignore
+        with: {name: dt12-part00, path: /tmp/chunks/dt12_g4.cpk.part00, compression-level: 0, if-no-files-found: ignore}
       - name: Upload part 01
         uses: actions/upload-artifact@v4
-        with:
-          name: dt12-part01
-          path: /tmp/chunks/dt12_g4.cpk.part01
-          compression-level: 0
-          if-no-files-found: ignore
+        with: {name: dt12-part01, path: /tmp/chunks/dt12_g4.cpk.part01, compression-level: 0, if-no-files-found: ignore}
       - name: Upload part 02
         uses: actions/upload-artifact@v4
-        with:
-          name: dt12-part02
-          path: /tmp/chunks/dt12_g4.cpk.part02
-          compression-level: 0
-          if-no-files-found: ignore
+        with: {name: dt12-part02, path: /tmp/chunks/dt12_g4.cpk.part02, compression-level: 0, if-no-files-found: ignore}
       - name: Upload part 03
         uses: actions/upload-artifact@v4
-        with:
-          name: dt12-part03
-          path: /tmp/chunks/dt12_g4.cpk.part03
-          compression-level: 0
-          if-no-files-found: ignore
+        with: {name: dt12-part03, path: /tmp/chunks/dt12_g4.cpk.part03, compression-level: 0, if-no-files-found: ignore}
       - name: Upload part 04
         uses: actions/upload-artifact@v4
-        with:
-          name: dt12-part04
-          path: /tmp/chunks/dt12_g4.cpk.part04
-          compression-level: 0
-          if-no-files-found: ignore
+        with: {name: dt12-part04, path: /tmp/chunks/dt12_g4.cpk.part04, compression-level: 0, if-no-files-found: ignore}
       - name: Upload part 05
         uses: actions/upload-artifact@v4
-        with:
-          name: dt12-part05
-          path: /tmp/chunks/dt12_g4.cpk.part05
-          compression-level: 0
-          if-no-files-found: ignore
+        with: {name: dt12-part05, path: /tmp/chunks/dt12_g4.cpk.part05, compression-level: 0, if-no-files-found: ignore}
       - name: Upload part 06
         uses: actions/upload-artifact@v4
-        with:
-          name: dt12-part06
-          path: /tmp/chunks/dt12_g4.cpk.part06
-          compression-level: 0
-          if-no-files-found: ignore
+        with: {name: dt12-part06, path: /tmp/chunks/dt12_g4.cpk.part06, compression-level: 0, if-no-files-found: ignore}
       - name: Upload part 07
         uses: actions/upload-artifact@v4
-        with:
-          name: dt12-part07
-          path: /tmp/chunks/dt12_g4.cpk.part07
-          compression-level: 0
-          if-no-files-found: ignore
+        with: {name: dt12-part07, path: /tmp/chunks/dt12_g4.cpk.part07, compression-level: 0, if-no-files-found: ignore}
       - name: Upload part 08
         uses: actions/upload-artifact@v4
-        with:
-          name: dt12-part08
-          path: /tmp/chunks/dt12_g4.cpk.part08
-          compression-level: 0
-          if-no-files-found: ignore
+        with: {name: dt12-part08, path: /tmp/chunks/dt12_g4.cpk.part08, compression-level: 0, if-no-files-found: ignore}
       - name: Upload part 09
         uses: actions/upload-artifact@v4
-        with:
-          name: dt12-part09
-          path: /tmp/chunks/dt12_g4.cpk.part09
-          compression-level: 0
-          if-no-files-found: ignore
+        with: {name: dt12-part09, path: /tmp/chunks/dt12_g4.cpk.part09, compression-level: 0, if-no-files-found: ignore}
