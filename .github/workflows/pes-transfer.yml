@@ -46,3 +46,5 @@ jobs:
           set -euo pipefail
           gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title 'Temporary PES transfer' --notes 'Temporary transfer bridge; delete after sandbox import.'
           gh release upload "$TAG" part0.bin part1.bin part2.bin part3.bin part4.bin --clobber
+
+# trigger 2
