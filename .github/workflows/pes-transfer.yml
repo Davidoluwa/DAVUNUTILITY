@@ -1,0 +1,48 @@
+name: Temporary PES transfer
+
+on:
+  push:
+    paths:
+      - '.github/workflows/pes-transfer.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  transfer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Download and verify ranges
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL='https://dn1.sharemods.com/cgi-bin/dl.cgi/ybrkrs3nvncbqhzqfvr2s4pdcfhrisrplf2wvktkucav2jhfpy5vqgq/PES2K18-CINEMATICFILES-WWW.PESNEWUPDATE.COM-.zip'
+          ranges=('0-209715199' '209715200-419430399' '419430400-629145599' '629145600-838860799' '838860800-')
+          for i in 0 1 2 3 4; do
+            (curl -L --fail --retry 8 --retry-delay 2 --retry-all-errors -H "Range: bytes=${ranges[$i]}" "$URL" -o "part${i}.bin") &
+          done
+          wait
+          test "$(stat -c%s part0.bin)" -eq 209715200
+          test "$(stat -c%s part1.bin)" -eq 209715200
+          test "$(stat -c%s part2.bin)" -eq 209715200
+          test "$(stat -c%s part3.bin)" -eq 209715200
+          test "$(stat -c%s part4.bin)" -eq 208792412
+          cat part0.bin part1.bin part2.bin part3.bin part4.bin > pack.zip
+          test "$(stat -c%s pack.zip)" -eq 1047653212
+          python - <<'PY'
+          import zipfile
+          with zipfile.ZipFile('pack.zip') as z:
+              assert z.testzip() is None
+              print('ZIP_OK', len(z.infolist()))
+          PY
+
+      - name: Upload temporary release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: pes-transfer-20260913
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title 'Temporary PES transfer' --notes 'Temporary transfer bridge; delete after sandbox import.'
+          gh release upload "$TAG" part0.bin part1.bin part2.bin part3.bin part4.bin --clobber
