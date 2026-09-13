@@ -1,4 +1,4 @@
-name: Temporary PES cleanup
+name: Temporary PES artifact cleanup
 
 on:
   push:
@@ -6,18 +6,20 @@ on:
       - '.github/workflows/pes-transfer.yml'
 
 permissions:
-  contents: write
+  actions: write
+  contents: read
 
 jobs:
   cleanup:
     runs-on: ubuntu-latest
     steps:
-      - name: Remove temporary transfer release and tag
+      - name: Delete temporary Actions artifacts
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: pes-transfer-20260913
           REPO: Davidoluwa/DAVUNUTILITY
         shell: bash
         run: |
           set -euo pipefail
-          gh release delete "$TAG" --repo "$REPO" --cleanup-tag --yes || true
+          for id in 10316485352 10316415522 10316161108 10315797207 10316460356; do
+            gh api --method DELETE "repos/$REPO/actions/artifacts/$id" || true
+          done
