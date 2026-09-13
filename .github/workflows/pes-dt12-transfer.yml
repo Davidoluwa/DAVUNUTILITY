@@ -1,0 +1,194 @@
+name: Temporary PES dt12 transfer
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/pes-dt12-transfer.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  fetch-dt12:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install extraction and browser tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y p7zip-full unar
+          npm init -y >/dev/null 2>&1
+          npm install playwright@1.55.0
+          npx playwright install chromium --with-deps
+
+      - name: Resolve Flashbang download and fetch archive
+        run: |
+          cat > /tmp/fetch.js <<'JS'
+          const { chromium } = require('playwright');
+          const fs = require('fs');
+          (async() => {
+            const browser = await chromium.launch({headless:true});
+            const context = await browser.newContext({acceptDownloads:true});
+            let page = await context.newPage();
+            const url = 'https://flashbang.sh/f/GSUgLG-0oAA';
+            await page.goto(url, {waitUntil:'domcontentloaded', timeout:60000});
+            await page.waitForTimeout(3000);
+            console.log('TITLE', await page.title());
+            const entries = await page.locator('a,button').evaluateAll(els => els.map(e => ({tag:e.tagName,text:(e.innerText||e.textContent||'').trim(),href:e.href||'',download:e.getAttribute('download')||''})));
+            console.log('LINKS/BUTTONS', JSON.stringify(entries, null, 2));
+
+            // Prefer a real download anchor if present.
+            let candidates = page.locator('a,button').filter({hasText:/download/i});
+            let count = await candidates.count();
+            console.log('download candidates', count);
+            let saved = false;
+            for (let i=0; i<count && !saved; i++) {
+              const loc = candidates.nth(i);
+              try {
+                const result = await Promise.race([
+                  page.waitForEvent('download', {timeout:20000}).then(d => ({kind:'download',d})),
+                  page.waitForNavigation({waitUntil:'domcontentloaded', timeout:20000}).then(() => ({kind:'nav'})).catch(()=>null)
+                ]);
+                await loc.click({timeout:10000});
+                if (result && result.kind === 'download') {
+                  console.log('DOWNLOAD suggested', result.d.suggestedFilename());
+                  await result.d.saveAs('/tmp/update.rar');
+                  saved = true;
+                  break;
+                }
+              } catch (e) { console.log('candidate failed', i, String(e)); }
+            }
+
+            // Some hosts open an ad/pop-up on first click. Try buttons/anchors again and watch all pages.
+            if (!saved) {
+              for (let attempt=0; attempt<4 && !saved; attempt++) {
+                page = context.pages()[0] || page;
+                const dl = page.getByText(/download/i).first();
+                try {
+                  const p = page.waitForEvent('download', {timeout:25000});
+                  await dl.click({timeout:10000});
+                  const d = await p;
+                  console.log('DOWNLOAD attempt', attempt, d.suggestedFilename());
+                  await d.saveAs('/tmp/update.rar');
+                  saved = true;
+                } catch(e) {
+                  console.log('retry', attempt, String(e));
+                  for (const extra of context.pages().slice(1)) { try { await extra.close(); } catch {} }
+                  await page.waitForTimeout(1500);
+                }
+              }
+            }
+
+            // Last resort: look for an href that became a direct file/torrent link.
+            if (!saved) {
+              const html = await page.content();
+              fs.writeFileSync('/tmp/page.html', html);
+              const hrefs = await page.locator('a').evaluateAll(as => as.map(a=>a.href).filter(Boolean));
+              console.log('FINAL HREFS', JSON.stringify(hrefs, null, 2));
+              throw new Error('Could not trigger direct download');
+            }
+            await browser.close();
+          })().catch(e => { console.error(e); process.exit(1); });
+          JS
+          node /tmp/fetch.js
+          ls -lh /tmp/update.rar
+          stat -c 'ARCHIVE_BYTES=%s' /tmp/update.rar
+
+      - name: Inspect archive and extract dt12_g4.cpk
+        run: |
+          7z l /tmp/update.rar | tee /tmp/archive-list.txt
+          mkdir -p /tmp/dt12
+          7z e -y /tmp/update.rar -o/tmp/dt12 '*dt12_g4.cpk'
+          CPK=$(find /tmp/dt12 -type f -iname 'dt12_g4.cpk' -print -quit)
+          test -n "$CPK"
+          stat -c 'CPK_BYTES=%s' "$CPK" | tee /tmp/cpk-info.txt
+          sha256sum "$CPK" | tee -a /tmp/cpk-info.txt
+          xxd -l 32 "$CPK" | tee -a /tmp/cpk-info.txt
+          mkdir -p /tmp/chunks
+          split -b 200M -d -a 2 "$CPK" /tmp/chunks/dt12_g4.cpk.part
+          ls -lh /tmp/chunks | tee -a /tmp/cpk-info.txt
+          sha256sum /tmp/chunks/* | tee /tmp/chunk-sha256.txt
+
+      - name: Upload metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: dt12-meta
+          path: |
+            /tmp/cpk-info.txt
+            /tmp/chunk-sha256.txt
+            /tmp/archive-list.txt
+          compression-level: 9
+
+      - name: Upload part 00
+        uses: actions/upload-artifact@v4
+        with:
+          name: dt12-part00
+          path: /tmp/chunks/dt12_g4.cpk.part00
+          compression-level: 0
+          if-no-files-found: ignore
+      - name: Upload part 01
+        uses: actions/upload-artifact@v4
+        with:
+          name: dt12-part01
+          path: /tmp/chunks/dt12_g4.cpk.part01
+          compression-level: 0
+          if-no-files-found: ignore
+      - name: Upload part 02
+        uses: actions/upload-artifact@v4
+        with:
+          name: dt12-part02
+          path: /tmp/chunks/dt12_g4.cpk.part02
+          compression-level: 0
+          if-no-files-found: ignore
+      - name: Upload part 03
+        uses: actions/upload-artifact@v4
+        with:
+          name: dt12-part03
+          path: /tmp/chunks/dt12_g4.cpk.part03
+          compression-level: 0
+          if-no-files-found: ignore
+      - name: Upload part 04
+        uses: actions/upload-artifact@v4
+        with:
+          name: dt12-part04
+          path: /tmp/chunks/dt12_g4.cpk.part04
+          compression-level: 0
+          if-no-files-found: ignore
+      - name: Upload part 05
+        uses: actions/upload-artifact@v4
+        with:
+          name: dt12-part05
+          path: /tmp/chunks/dt12_g4.cpk.part05
+          compression-level: 0
+          if-no-files-found: ignore
+      - name: Upload part 06
+        uses: actions/upload-artifact@v4
+        with:
+          name: dt12-part06
+          path: /tmp/chunks/dt12_g4.cpk.part06
+          compression-level: 0
+          if-no-files-found: ignore
+      - name: Upload part 07
+        uses: actions/upload-artifact@v4
+        with:
+          name: dt12-part07
+          path: /tmp/chunks/dt12_g4.cpk.part07
+          compression-level: 0
+          if-no-files-found: ignore
+      - name: Upload part 08
+        uses: actions/upload-artifact@v4
+        with:
+          name: dt12-part08
+          path: /tmp/chunks/dt12_g4.cpk.part08
+          compression-level: 0
+          if-no-files-found: ignore
+      - name: Upload part 09
+        uses: actions/upload-artifact@v4
+        with:
+          name: dt12-part09
+          path: /tmp/chunks/dt12_g4.cpk.part09
+          compression-level: 0
+          if-no-files-found: ignore
