@@ -1,4 +1,4 @@
-name: Temporary PES transfer
+name: Temporary PES artifact bridge
 
 on:
   push:
@@ -6,38 +6,14 @@ on:
       - '.github/workflows/pes-transfer.yml'
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  transfer:
+  bridge:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
     steps:
-      - name: Download and verify ranges
-        shell: bash
-        run: |
-          set -euo pipefail
-          URL='https://dn1.sharemods.com/cgi-bin/dl.cgi/ybrkrs3nvncbqhzqfvr2s4pdcfhrisrplf2wvktkucav2jhfpy5vqgq/PES2K18-CINEMATICFILES-WWW.PESNEWUPDATE.COM-.zip'
-          ranges=('0-209715199' '209715200-419430399' '419430400-629145599' '629145600-838860799' '838860800-')
-          for i in 0 1 2 3 4; do
-            (curl -L --fail --retry 8 --retry-delay 2 --retry-all-errors -H "Range: bytes=${ranges[$i]}" "$URL" -o "part${i}.bin") &
-          done
-          wait
-          test "$(stat -c%s part0.bin)" -eq 209715200
-          test "$(stat -c%s part1.bin)" -eq 209715200
-          test "$(stat -c%s part2.bin)" -eq 209715200
-          test "$(stat -c%s part3.bin)" -eq 209715200
-          test "$(stat -c%s part4.bin)" -eq 208792412
-          cat part0.bin part1.bin part2.bin part3.bin part4.bin > pack.zip
-          test "$(stat -c%s pack.zip)" -eq 1047653212
-          python - <<'PY'
-          import zipfile
-          with zipfile.ZipFile('pack.zip') as z:
-              assert z.testzip() is None
-              print('ZIP_OK', len(z.infolist()))
-          PY
-
-      - name: Upload temporary release assets
+      - name: Pull verified release chunks
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: pes-transfer-20260913
@@ -45,7 +21,42 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1 || gh release create "$TAG" --repo "$REPO" --title 'Temporary PES transfer' --notes 'Temporary transfer bridge; delete after sandbox import.'
-          gh release upload "$TAG" part0.bin part1.bin part2.bin part3.bin part4.bin --repo "$REPO" --clobber
+          gh release download "$TAG" --repo "$REPO" --pattern 'part*.bin'
+          test "$(stat -c%s part0.bin)" -eq 209715200
+          test "$(stat -c%s part1.bin)" -eq 209715200
+          test "$(stat -c%s part2.bin)" -eq 209715200
+          test "$(stat -c%s part3.bin)" -eq 209715200
+          test "$(stat -c%s part4.bin)" -eq 208792412
 
-# trigger 3
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pes-part0
+          path: part0.bin
+          compression-level: 0
+          retention-days: 1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pes-part1
+          path: part1.bin
+          compression-level: 0
+          retention-days: 1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pes-part2
+          path: part2.bin
+          compression-level: 0
+          retention-days: 1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pes-part3
+          path: part3.bin
+          compression-level: 0
+          retention-days: 1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pes-part4
+          path: part4.bin
+          compression-level: 0
+          retention-days: 1
+
+# public artifact bridge
