@@ -1,3 +1,0 @@
-Temporary bridge for PES pack transfer.
-
-[Download staged part0](https://eu-central.storage.cloudconvert.com/tasks/9bbbb848-3251-45a4-8568-835eba738d2b/part0.bin?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=cloudconvert-production%2F20260913%2Ffra%2Fs3%2Faws4_request&X-Amz-Date=20260913T095435Z&X-Amz-Expires=86400&X-Amz-Signature=a34381c37de7ece5ec5dcc5214cf403c4bb1f53fccdd96306971288c7b6146cf&X-Amz-SignedHeaders=host&response-content-disposition=attachment%3B%20filename%3D%22part0.bin%22&response-content-type=application%2Foctet-stream&x-amz-checksum-mode=ENABLED&x-id=GetObject)
