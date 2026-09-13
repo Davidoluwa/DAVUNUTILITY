@@ -1,4 +1,4 @@
-name: Temporary PES artifact bridge
+name: Temporary PES cleanup
 
 on:
   push:
@@ -6,14 +6,13 @@ on:
       - '.github/workflows/pes-transfer.yml'
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  bridge:
+  cleanup:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
     steps:
-      - name: Pull verified release chunks
+      - name: Remove temporary transfer release and tag
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: pes-transfer-20260913
@@ -21,42 +20,4 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gh release download "$TAG" --repo "$REPO" --pattern 'part*.bin'
-          test "$(stat -c%s part0.bin)" -eq 209715200
-          test "$(stat -c%s part1.bin)" -eq 209715200
-          test "$(stat -c%s part2.bin)" -eq 209715200
-          test "$(stat -c%s part3.bin)" -eq 209715200
-          test "$(stat -c%s part4.bin)" -eq 208792412
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: pes-part0
-          path: part0.bin
-          compression-level: 0
-          retention-days: 1
-      - uses: actions/upload-artifact@v4
-        with:
-          name: pes-part1
-          path: part1.bin
-          compression-level: 0
-          retention-days: 1
-      - uses: actions/upload-artifact@v4
-        with:
-          name: pes-part2
-          path: part2.bin
-          compression-level: 0
-          retention-days: 1
-      - uses: actions/upload-artifact@v4
-        with:
-          name: pes-part3
-          path: part3.bin
-          compression-level: 0
-          retention-days: 1
-      - uses: actions/upload-artifact@v4
-        with:
-          name: pes-part4
-          path: part4.bin
-          compression-level: 0
-          retention-days: 1
-
-# public artifact bridge
+          gh release delete "$TAG" --repo "$REPO" --cleanup-tag --yes || true
