@@ -26,74 +26,90 @@ jobs:
 
       - name: Resolve Flashbang download and fetch archive
         run: |
-          cat > /tmp/fetch.js <<'JS'
+          cat > fetch-dt12.js <<'JS'
           const { chromium } = require('playwright');
           const fs = require('fs');
+
+          async function tryDownload(page, locator, out) {
+            try {
+              const p = page.waitForEvent('download', { timeout: 20000 });
+              await locator.click({ timeout: 10000 });
+              const d = await p;
+              console.log('DOWNLOAD:', d.suggestedFilename());
+              await d.saveAs(out);
+              return true;
+            } catch (e) {
+              console.log('download attempt failed:', String(e));
+              return false;
+            }
+          }
+
           (async() => {
-            const browser = await chromium.launch({headless:true});
-            const context = await browser.newContext({acceptDownloads:true});
+            const browser = await chromium.launch({ headless: true });
+            const context = await browser.newContext({ acceptDownloads: true });
             let page = await context.newPage();
             const url = 'https://flashbang.sh/f/GSUgLG-0oAA';
-            await page.goto(url, {waitUntil:'domcontentloaded', timeout:60000});
-            await page.waitForTimeout(3000);
-            console.log('TITLE', await page.title());
-            const entries = await page.locator('a,button').evaluateAll(els => els.map(e => ({tag:e.tagName,text:(e.innerText||e.textContent||'').trim(),href:e.href||'',download:e.getAttribute('download')||''})));
+            await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+            await page.waitForTimeout(2500);
+            console.log('TITLE:', await page.title());
+
+            const entries = await page.locator('a,button').evaluateAll(els => els.map(e => ({
+              tag:e.tagName,
+              text:(e.innerText||e.textContent||'').trim(),
+              href:e.href||'',
+              download:e.getAttribute('download')||''
+            })));
             console.log('LINKS/BUTTONS', JSON.stringify(entries, null, 2));
 
-            // Prefer a real download anchor if present.
-            let candidates = page.locator('a,button').filter({hasText:/download/i});
-            let count = await candidates.count();
-            console.log('download candidates', count);
             let saved = false;
-            for (let i=0; i<count && !saved; i++) {
-              const loc = candidates.nth(i);
-              try {
-                const result = await Promise.race([
-                  page.waitForEvent('download', {timeout:20000}).then(d => ({kind:'download',d})),
-                  page.waitForNavigation({waitUntil:'domcontentloaded', timeout:20000}).then(() => ({kind:'nav'})).catch(()=>null)
-                ]);
-                await loc.click({timeout:10000});
-                if (result && result.kind === 'download') {
-                  console.log('DOWNLOAD suggested', result.d.suggestedFilename());
-                  await result.d.saveAs('/tmp/update.rar');
-                  saved = true;
-                  break;
+            for (let attempt = 0; attempt < 5 && !saved; attempt++) {
+              const pages = context.pages();
+              page = pages[0] || page;
+              for (const extra of pages.slice(1)) {
+                try { await extra.close(); } catch {}
+              }
+
+              const candidates = page.locator('a,button').filter({ hasText: /download/i });
+              const n = await candidates.count();
+              console.log('attempt', attempt, 'download candidates', n);
+              for (let i = 0; i < n && !saved; i++) {
+                saved = await tryDownload(page, candidates.nth(i), '/tmp/update.rar');
+                if (!saved) {
+                  await page.waitForTimeout(1200);
                 }
-              } catch (e) { console.log('candidate failed', i, String(e)); }
+              }
+              if (!saved) {
+                try { await page.reload({ waitUntil:'domcontentloaded', timeout:60000 }); } catch {}
+                await page.waitForTimeout(1800);
+              }
             }
 
-            // Some hosts open an ad/pop-up on first click. Try buttons/anchors again and watch all pages.
             if (!saved) {
-              for (let attempt=0; attempt<4 && !saved; attempt++) {
-                page = context.pages()[0] || page;
-                const dl = page.getByText(/download/i).first();
-                try {
-                  const p = page.waitForEvent('download', {timeout:25000});
-                  await dl.click({timeout:10000});
-                  const d = await p;
-                  console.log('DOWNLOAD attempt', attempt, d.suggestedFilename());
-                  await d.saveAs('/tmp/update.rar');
+              const hrefs = await page.locator('a').evaluateAll(as => as.map(a => a.href).filter(Boolean));
+              console.log('FINAL HREFS', JSON.stringify(hrefs, null, 2));
+              fs.writeFileSync('/tmp/page.html', await page.content());
+
+              // Try direct-looking URLs discovered in the DOM.
+              const direct = hrefs.find(h => /\.rar($|\?)/i.test(h) || /download|\/dl\//i.test(h));
+              if (direct) {
+                console.log('DIRECT CANDIDATE', direct);
+                const r = await context.request.get(direct, { timeout: 120000 });
+                console.log('DIRECT STATUS', r.status(), r.headers());
+                if (r.ok()) {
+                  fs.writeFileSync('/tmp/update.rar', await r.body());
                   saved = true;
-                } catch(e) {
-                  console.log('retry', attempt, String(e));
-                  for (const extra of context.pages().slice(1)) { try { await extra.close(); } catch {} }
-                  await page.waitForTimeout(1500);
                 }
               }
             }
 
-            // Last resort: look for an href that became a direct file/torrent link.
-            if (!saved) {
-              const html = await page.content();
-              fs.writeFileSync('/tmp/page.html', html);
-              const hrefs = await page.locator('a').evaluateAll(as => as.map(a=>a.href).filter(Boolean));
-              console.log('FINAL HREFS', JSON.stringify(hrefs, null, 2));
-              throw new Error('Could not trigger direct download');
+            if (!saved || !fs.existsSync('/tmp/update.rar')) {
+              throw new Error('Could not trigger or resolve the archive download');
             }
+
             await browser.close();
           })().catch(e => { console.error(e); process.exit(1); });
           JS
-          node /tmp/fetch.js
+          node ./fetch-dt12.js
           ls -lh /tmp/update.rar
           stat -c 'ARCHIVE_BYTES=%s' /tmp/update.rar
 
