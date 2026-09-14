@@ -10,17 +10,19 @@ permissions:
   contents: read
 
 jobs:
-  probe-jina:
+  probe-jina-stage2:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - name: Probe direct ModsFire endpoint through Jina
+      - name: Probe second-stage ModsFire page through Jina
         run: |
           set -euxo pipefail
-          U='https://r.jina.ai/https://modsfire.com/d/xnbcgig635r24UH'
+          U='https://r.jina.ai/https://modsfire.com/download/xnbcgig635r24UH/00f75'
           curl -A 'Mozilla/5.0' -sS -D /tmp/h.txt -o /tmp/body.txt -w 'HTTP=%{http_code}\nEFFECTIVE=%{url_effective}\nTYPE=%{content_type}\nSIZE=%{size_download}\nREDIRS=%{num_redirects}\n' -L "$U" || true
           cat /tmp/h.txt || true
+          echo '--- URL CANDIDATES ---'
+          grep -Eo 'https?://[^ )<>"'"']+' /tmp/body.txt | sort -u | grep -Ei 'modsfire|download|cdn|file|storage|server' || true
           echo '--- BODY ---'
-          head -c 30000 /tmp/body.txt || true
+          head -c 40000 /tmp/body.txt || true
           echo
