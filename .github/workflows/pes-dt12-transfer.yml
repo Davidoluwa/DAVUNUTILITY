@@ -10,37 +10,26 @@ permissions:
   contents: read
 
 jobs:
-  inspect-mirror:
+  resolve-mirror:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - name: Inspect exact MegaPatch mirror page
+      - name: Resolve PES Files download endpoint
         run: |
           set -euxo pipefail
-          URL='https://pes-files.ru/pes_2021_megapatch_2_1_fix_12_07_2024'
-          curl -A 'Mozilla/5.0' -L --compressed -o /tmp/page.html "$URL"
-          wc -c /tmp/page.html
-          echo '--- MODSFIRE LINES ---'
-          grep -in -C 8 'modsfire\|mods-fire\|mods fire' /tmp/page.html || true
-          echo '--- URLS OF INTEREST ---'
+          PAGE='https://pes-files.ru/pes_2021_megapatch_2_1_fix_12_07_2024'
+          LOAD='https://pes-files.ru/load/0-0-1-59913-20'
+          curl -A 'Mozilla/5.0' -c /tmp/cookies.txt -L --compressed -o /tmp/page.html "$PAGE"
+          echo '--- HEAD/REDIRECT ---'
+          curl -A 'Mozilla/5.0' -b /tmp/cookies.txt -e "$PAGE" -sS -D /tmp/headers.txt -o /tmp/loadbody.html -w 'HTTP=%{http_code}\nEFFECTIVE=%{url_effective}\nTYPE=%{content_type}\nSIZE=%{size_download}\nREDIRS=%{num_redirects}\n' -L "$LOAD"
+          cat /tmp/headers.txt
+          echo '--- BODY PREFIX ---'
+          head -c 8000 /tmp/loadbody.html || true
+          echo
+          echo '--- ALL URLS IN BODY ---'
           python3 - <<'PY'
           import re, html
-          s=open('/tmp/page.html','r',encoding='utf-8',errors='ignore').read()
-          s=html.unescape(s)
-          urls=sorted(set(re.findall(r'https?://[^\"\'<>\\\s]+',s)))
-          for u in urls:
-              if any(k in u.lower() for k in ['modsfire','download','megapatch','flashbang','gofile']): print(u)
-          print('modsfire token count', s.lower().count('modsfire'))
-          PY
-          echo '--- HREF/SCRIPT SNIPPETS AROUND DOWNLOAD ---'
-          python3 - <<'PY'
-          from bs4 import BeautifulSoup
-          s=open('/tmp/page.html','r',encoding='utf-8',errors='ignore').read()
-          soup=BeautifulSoup(s,'html.parser')
-          for tag in soup.find_all(['a','button','script','div']):
-              txt=' '.join(tag.stripped_strings)
-              blob=str(tag)
-              if any(k in (txt+' '+blob).lower() for k in ['modsfire','megapatch 2.1 fix']):
-                  print(blob[:4000])
+          s=html.unescape(open('/tmp/loadbody.html','r',encoding='utf-8',errors='ignore').read())
+          for u in sorted(set(re.findall(r'https?://[^\"\'<>\\\s]+',s))): print(u)
           PY
