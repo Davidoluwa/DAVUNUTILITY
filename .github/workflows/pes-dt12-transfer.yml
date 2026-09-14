@@ -10,26 +10,20 @@ permissions:
   contents: read
 
 jobs:
-  resolve-mirror:
+  probe-direct:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - name: Resolve PES Files download endpoint
+      - name: Probe direct ModsFire endpoint safely
         run: |
           set -euxo pipefail
-          PAGE='https://pes-files.ru/pes_2021_megapatch_2_1_fix_12_07_2024'
-          LOAD='https://pes-files.ru/load/0-0-1-59913-20'
-          curl -A 'Mozilla/5.0' -c /tmp/cookies.txt -L --compressed -o /tmp/page.html "$PAGE"
-          echo '--- HEAD/REDIRECT ---'
-          curl -A 'Mozilla/5.0' -b /tmp/cookies.txt -e "$PAGE" -sS -D /tmp/headers.txt -o /tmp/loadbody.html -w 'HTTP=%{http_code}\nEFFECTIVE=%{url_effective}\nTYPE=%{content_type}\nSIZE=%{size_download}\nREDIRS=%{num_redirects}\n' -L "$LOAD"
-          cat /tmp/headers.txt
-          echo '--- BODY PREFIX ---'
-          head -c 8000 /tmp/loadbody.html || true
-          echo
-          echo '--- ALL URLS IN BODY ---'
-          python3 - <<'PY'
-          import re, html
-          s=html.unescape(open('/tmp/loadbody.html','r',encoding='utf-8',errors='ignore').read())
-          for u in sorted(set(re.findall(r'https?://[^\"\'<>\\\s]+',s))): print(u)
-          PY
+          U='https://modsfire.com/d/xnbcgig635r24UH'
+          echo '--- HEAD ---'
+          curl -A 'Mozilla/5.0' -sSIL --max-redirs 10 "$U" || true
+          echo '--- RANGE 0-1023 ---'
+          curl -A 'Mozilla/5.0' -sS -D /tmp/h.txt -H 'Range: bytes=0-1023' -L --max-redirs 10 -o /tmp/prefix.bin -w 'HTTP=%{http_code}\nEFFECTIVE=%{url_effective}\nTYPE=%{content_type}\nSIZE=%{size_download}\nREDIRS=%{num_redirects}\n' "$U" || true
+          cat /tmp/h.txt || true
+          file /tmp/prefix.bin || true
+          stat -c 'PREFIX_BYTES=%s' /tmp/prefix.bin || true
+          xxd -l 128 /tmp/prefix.bin || true
