@@ -10,154 +10,37 @@ permissions:
   contents: read
 
 jobs:
-  fetch-dt12:
+  inspect-mirror:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install tools
+      - name: Inspect exact MegaPatch mirror page
         run: |
-          sudo apt-get update
-          sudo apt-get install -y p7zip-full unar aria2
-          npm init -y >/dev/null 2>&1
-          npm install playwright@1.55.0
-
-      - name: Fetch official MegaPatch torrent from GoFile
-        run: |
-          cat > gofile.js <<'JS'
-          const { chromium } = require('playwright');
-          const fs = require('fs');
-          (async () => {
-            const browser = await chromium.launch({headless:true, executablePath:'/usr/bin/google-chrome', args:['--no-sandbox']});
-            const context = await browser.newContext({acceptDownloads:true});
-            const page = await context.newPage();
-            page.on('response', r => {
-              const u=r.url();
-              if (/gofile|download/i.test(u)) console.log('RESP', r.status(), u);
-            });
-            await page.goto('https://gofile.io/d/2vvcpf', {waitUntil:'domcontentloaded', timeout:60000});
-            await page.waitForTimeout(8000);
-            console.log('TITLE', await page.title());
-            console.log('TEXT', (await page.locator('body').innerText()).slice(0,12000));
-            const entries = await page.locator('a,button').evaluateAll(els => els.map((e,i)=>({i,tag:e.tagName,text:(e.innerText||e.textContent||'').trim(),href:e.href||'',title:e.getAttribute('title')||'',aria:e.getAttribute('aria-label')||''})));
-            console.log('ENTRIES', JSON.stringify(entries,null,2));
-
-            let done=false;
-            const direct=entries.find(e => /\.torrent($|\?)/i.test(e.href));
-            if (direct) {
-              console.log('DIRECT TORRENT', direct.href);
-              const resp=await context.request.get(direct.href, {timeout:60000});
-              if (resp.ok()) { fs.writeFileSync('/tmp/update.torrent', await resp.body()); done=true; }
-            }
-
-            if (!done) {
-              const torrentText=page.getByText(/\.torrent/i).first();
-              if (await torrentText.count()) {
-                console.log('FOUND TORRENT TEXT', await torrentText.innerText());
-                const row=torrentText.locator('xpath=ancestor::*[self::tr or @role="row" or contains(@class,"file")][1]');
-                let root=(await row.count())?row:torrentText.locator('xpath=..');
-                const buttons=root.locator('a,button');
-                const n=await buttons.count();
-                for(let i=0;i<n && !done;i++) {
-                  try {
-                    const p=page.waitForEvent('download',{timeout:12000});
-                    await buttons.nth(i).click({timeout:5000});
-                    const d=await p;
-                    console.log('TORRENT DOWNLOAD',d.suggestedFilename());
-                    await d.saveAs('/tmp/update.torrent'); done=true;
-                  } catch(e) { console.log('torrent click failed',i,String(e)); }
-                }
-              }
-            }
-
-            if (!done) {
-              const downloads=page.locator('a,button').filter({hasText:/download/i});
-              const n=await downloads.count();
-              for(let i=0;i<n && !done;i++) {
-                try {
-                  const p=page.waitForEvent('download',{timeout:12000});
-                  await downloads.nth(i).click({timeout:5000});
-                  const d=await p;
-                  console.log('GENERIC DOWNLOAD',d.suggestedFilename());
-                  await d.saveAs('/tmp/update.torrent'); done=true;
-                } catch(e) { console.log('download click failed',i,String(e)); }
-              }
-            }
-            await browser.close();
-            if(!done) throw new Error('Could not obtain GoFile torrent');
-          })().catch(e=>{console.error(e);process.exit(1)});
-          JS
-          node gofile.js
-          file /tmp/update.torrent
-          ls -lh /tmp/update.torrent
-          head -c 20 /tmp/update.torrent | xxd
-
-      - name: Download archive via torrent
-        run: |
-          mkdir -p /tmp/torrent
-          aria2c --seed-time=0 --file-allocation=none --dir=/tmp/torrent --summary-interval=20 --console-log-level=notice /tmp/update.torrent
-          find /tmp/torrent -maxdepth 3 -type f -printf '%s %p\n' | sort -nr | tee /tmp/torrent-files.txt
-          RAR=$(find /tmp/torrent -type f \( -iname '*.rar' -o -iname '*.7z' -o -iname '*.zip' \) -printf '%s %p\n' | sort -nr | head -1 | cut -d' ' -f2-)
-          test -n "$RAR"
-          cp "$RAR" /tmp/update.rar
-          stat -c 'ARCHIVE_BYTES=%s' /tmp/update.rar | tee /tmp/archive-info.txt
-          sha256sum /tmp/update.rar | tee -a /tmp/archive-info.txt
-
-      - name: Extract dt12_g4.cpk
-        run: |
-          7z l /tmp/update.rar | tee /tmp/archive-list.txt
-          mkdir -p /tmp/dt12
-          7z e -y /tmp/update.rar -o/tmp/dt12 '*dt12_g4.cpk'
-          CPK=$(find /tmp/dt12 -type f -iname 'dt12_g4.cpk' -print -quit)
-          test -n "$CPK"
-          stat -c 'CPK_BYTES=%s' "$CPK" | tee /tmp/cpk-info.txt
-          sha256sum "$CPK" | tee -a /tmp/cpk-info.txt
-          xxd -l 32 "$CPK" | tee -a /tmp/cpk-info.txt
-          mkdir -p /tmp/chunks
-          split -b 200M -d -a 2 "$CPK" /tmp/chunks/dt12_g4.cpk.part
-          ls -lh /tmp/chunks | tee -a /tmp/cpk-info.txt
-          sha256sum /tmp/chunks/* | tee /tmp/chunk-sha256.txt
-
-      - name: Upload metadata
-        uses: actions/upload-artifact@v4
-        with:
-          name: dt12-meta
-          path: |
-            /tmp/cpk-info.txt
-            /tmp/chunk-sha256.txt
-            /tmp/archive-info.txt
-            /tmp/archive-list.txt
-            /tmp/torrent-files.txt
-          compression-level: 9
-
-      - name: Upload part 00
-        uses: actions/upload-artifact@v4
-        with: {name: dt12-part00, path: /tmp/chunks/dt12_g4.cpk.part00, compression-level: 0, if-no-files-found: ignore}
-      - name: Upload part 01
-        uses: actions/upload-artifact@v4
-        with: {name: dt12-part01, path: /tmp/chunks/dt12_g4.cpk.part01, compression-level: 0, if-no-files-found: ignore}
-      - name: Upload part 02
-        uses: actions/upload-artifact@v4
-        with: {name: dt12-part02, path: /tmp/chunks/dt12_g4.cpk.part02, compression-level: 0, if-no-files-found: ignore}
-      - name: Upload part 03
-        uses: actions/upload-artifact@v4
-        with: {name: dt12-part03, path: /tmp/chunks/dt12_g4.cpk.part03, compression-level: 0, if-no-files-found: ignore}
-      - name: Upload part 04
-        uses: actions/upload-artifact@v4
-        with: {name: dt12-part04, path: /tmp/chunks/dt12_g4.cpk.part04, compression-level: 0, if-no-files-found: ignore}
-      - name: Upload part 05
-        uses: actions/upload-artifact@v4
-        with: {name: dt12-part05, path: /tmp/chunks/dt12_g4.cpk.part05, compression-level: 0, if-no-files-found: ignore}
-      - name: Upload part 06
-        uses: actions/upload-artifact@v4
-        with: {name: dt12-part06, path: /tmp/chunks/dt12_g4.cpk.part06, compression-level: 0, if-no-files-found: ignore}
-      - name: Upload part 07
-        uses: actions/upload-artifact@v4
-        with: {name: dt12-part07, path: /tmp/chunks/dt12_g4.cpk.part07, compression-level: 0, if-no-files-found: ignore}
-      - name: Upload part 08
-        uses: actions/upload-artifact@v4
-        with: {name: dt12-part08, path: /tmp/chunks/dt12_g4.cpk.part08, compression-level: 0, if-no-files-found: ignore}
-      - name: Upload part 09
-        uses: actions/upload-artifact@v4
-        with: {name: dt12-part09, path: /tmp/chunks/dt12_g4.cpk.part09, compression-level: 0, if-no-files-found: ignore}
+          set -euxo pipefail
+          URL='https://pes-files.ru/pes_2021_megapatch_2_1_fix_12_07_2024'
+          curl -A 'Mozilla/5.0' -L --compressed -o /tmp/page.html "$URL"
+          wc -c /tmp/page.html
+          echo '--- MODSFIRE LINES ---'
+          grep -in -C 8 'modsfire\|mods-fire\|mods fire' /tmp/page.html || true
+          echo '--- URLS OF INTEREST ---'
+          python3 - <<'PY'
+          import re, html
+          s=open('/tmp/page.html','r',encoding='utf-8',errors='ignore').read()
+          s=html.unescape(s)
+          urls=sorted(set(re.findall(r'https?://[^\"\'<>\\\s]+',s)))
+          for u in urls:
+              if any(k in u.lower() for k in ['modsfire','download','megapatch','flashbang','gofile']): print(u)
+          print('modsfire token count', s.lower().count('modsfire'))
+          PY
+          echo '--- HREF/SCRIPT SNIPPETS AROUND DOWNLOAD ---'
+          python3 - <<'PY'
+          from bs4 import BeautifulSoup
+          s=open('/tmp/page.html','r',encoding='utf-8',errors='ignore').read()
+          soup=BeautifulSoup(s,'html.parser')
+          for tag in soup.find_all(['a','button','script','div']):
+              txt=' '.join(tag.stripped_strings)
+              blob=str(tag)
+              if any(k in (txt+' '+blob).lower() for k in ['modsfire','megapatch 2.1 fix']):
+                  print(blob[:4000])
+          PY
