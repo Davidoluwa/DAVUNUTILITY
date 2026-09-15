@@ -1,0 +1,58 @@
+name: Temporary GANI Viewer x86 Build
+
+on:
+  push:
+    paths:
+      - 'temp_gani_viewer/source.zip.b64'
+      - '.github/workflows/temp-gani-viewer-x86.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-x86:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Decode source archive
+        shell: pwsh
+        run: |
+          $b64 = Get-Content -Raw temp_gani_viewer/source.zip.b64
+          [IO.File]::WriteAllBytes("source.zip", [Convert]::FromBase64String($b64))
+          Expand-Archive source.zip -DestinationPath gani-viewer-src -Force
+
+      - name: Configure Win32
+        shell: pwsh
+        run: cmake -S gani-viewer-src -B build -G "Visual Studio 17 2022" -A Win32
+
+      - name: Build Release
+        shell: pwsh
+        run: cmake --build build --config Release --parallel
+
+      - name: Verify genuine PE32 x86 executable
+        shell: pwsh
+        run: |
+          $exe = "build/Release/GANIViewer.exe"
+          if (!(Test-Path $exe)) { throw "GANIViewer.exe missing" }
+          $bytes = [IO.File]::ReadAllBytes($exe)
+          $pe = [BitConverter]::ToInt32($bytes, 0x3c)
+          $machine = [BitConverter]::ToUInt16($bytes, $pe + 4)
+          $magic = [BitConverter]::ToUInt16($bytes, $pe + 24)
+          Write-Host ("PE machine = 0x{0:X4}" -f $machine)
+          Write-Host ("Optional-header magic = 0x{0:X4}" -f $magic)
+          Write-Host ("Size = {0} bytes" -f $bytes.Length)
+          if ($machine -ne 0x14c) { throw "Not IMAGE_FILE_MACHINE_I386" }
+          if ($magic -ne 0x10b) { throw "Not PE32" }
+          New-Item -ItemType Directory package | Out-Null
+          Copy-Item $exe package/GANIViewer.exe
+          Copy-Item gani-viewer-src/README.md package/README.md
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GANIViewer-Win32-x86
+          path: package
+          if-no-files-found: error
+          retention-days: 1
