@@ -1,0 +1,110 @@
+name: Temporary GANI Viewer v2 x86 Build
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/temp-gani-viewer-v2-x86.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build-x86:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Recover base source
+        shell: pwsh
+        run: |
+          $url = 'https://raw.githubusercontent.com/Davidoluwa/DAVUNUTILITY/5f704ce7dd14941d1bd0e19ba1e605de2a0850e4/temp_gani_viewer/source.zip.b64'
+          $b64 = (Invoke-WebRequest -UseBasicParsing $url).Content.Trim()
+          [IO.File]::WriteAllBytes('source.zip', [Convert]::FromBase64String($b64))
+          Expand-Archive source.zip -DestinationPath gani-viewer-src -Force
+
+      - name: Patch v2 self-contained rig and Explorer drop
+        shell: bash
+        run: |
+          export ASK_B64='AQAAABQAAADNzc3NbAMAAP////8AAAAAqU2MPwAAAAAAAAAAAAAAAAAAAAAAAAAAAACAP83Nzc1MAwAAAAAAAArXo6NWEtW9vlOWvAAAAAAAAAAAAAAAAAAAAAAAAIA/zc3NzSgDAAABAAAA7FG4PbiDA72F8JE9AAAAAAAAAAAAAAAAAAAAAAAAgD/Nzc3NBwMAAAIAAACrpq+4wu7WvtTeDz0AAAAAAAAAAAAAAAAAAAAAAACAP83Nzc3kAgAAAwAAAArSt7jI7eC+PCE/vQAAAAAAAAAAAAAAAAAAAAAAAIA/zc3NzcICAAABAAAA7FG4vbiDA72F8JE9AAAAAAAAAAAAAAAAAAAAAAAAgD/Nzc3NoQIAAAUAAACrpq84wu7WvtTeDz0AAAAAAAAAAAAAAAAAAAAAAACAP83Nzc1+AgAABgAAAArStzjI7eC+PCE/vQAAAAAAAAAAAAAAAAAAAAAAAIA/zc3NzVwCAAAAAAAAPQqXjgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgD/Nzc3NOQIAAAgAAABgLYkk7KYqPqv+YTwAAAAAAAAAAAAAAAAAAAAAAACAP83Nzc0WAgAACQAAAKmuzCQv34k+rCyhPAAAAAAAAAAAAAAAAAAAAAAAAIA/zc3NzfIBAAAKAAAAzE9AJK4w3T1I7ao8AAAAAAAAAAAAAAAAAAAAAAAAgD/Nzc3NzgEAAAkAAABINNc9xC5RPkItoTwAAAAAAAAAAAAAAAAAAAAAAACAP83Nzc2wAQAADAAAAPonuD2uqVG1YEWQswAAAAAAAAAAAAAAAAAAAAAAAIA/zc3NzZIBAAANAAAA4suTPq5RKLZbs+O8AAAAAAAAAAAAAAAAAAAAAAAAgD/Nzc3NcwEAAA4AAACXcZI+T9gKtp0MRD0AAAAAAAAAAAAAAAAAAAAAAACAP83Nzc1RAQAACQAAAF41170/L1E+ly2hPAAAAAAAAAAAAAAAAAAAAAAAAIA/zc3NzTMBAAAQAAAA+ie4vdOpUTW/T/U0AAAAAAAAAAAAAAAAAAAAAAAAgD/Nzc3NFQEAABEAAADdy5O+J/odNmmy47wAAAAAAAAAAAAAAAAAAAAAAACAP83Nzc32AAAAEgAAAKRxkr5Gcjg2JA1EPQAAAAAAAAAAAAAAAAAAAAAAAIA/c2tfcm9vdF9oaXAAZHNrX2hpcABza190aGlnaF9sAHNrX2xlZ19sAHNrX2Zvb3RfbABza190aGlnaF9yAHNrX2xlZ19yAHNrX2Zvb3RfcgBza19iZWxseQBza19jaGVzdABza19uZWNrAHNrX2hlYWQAc2tfc2hvdWxkZXJfbABza191cHBlcmFybV9sAHNrX2ZvcmVhcm1fbABza19oYW5kX2wAc2tfc2hvdWxkZXJfcgBza191cHBlcmFybV9yAHNrX2ZvcmVhcm1fcgBza19oYW5kX3IA'
+          export FRIG_B64='Jh65eFwAAABmAAAADwAAABsAAAB8BQAA2AQAAPACAABwAAAAkAAAALAAAADQAAAAIAEAAEABAACQAQAAsAEAANABAADwAQAAEAIAADACAABwAgAAkAIAANACAABIdW1hbkJvZHkAAAAAAAAAAAAAAAEAAAACAAAA/////wAAAAAAAAEAAAAAAAAAAAAAAAAABQAAAAIAAQD//wAAAAAAAAAAAgADAAAAAAAAAAAAAAAEAAAAAQABAAAAAQAAAAAAAQAEAAAAAAAAAAAAAAAAAAMAAAAEAAIAAQACAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAP4M2UTk6gIAwAAAAAAIAAwAFAAYABAAHAAgAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAEAAQADAAMAAAAAAAQACQAAAAAAAAAAAAAAAAADAAAABAACAAEAAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgD+DNlG5OoCAMAAAAAAFAAYACgALAAcADAANAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAABAAEABgAFAAAAAAAHAA4AAAAAAAAAAAAAAAAABAAAAAEAAQAAAAEAAAAAAAgADwAAAAAAAAAAAAAAAAAEAAAAAQABAAgABwAAAAAACQAQAAAAAAAAAAAAAAAAAAQAAAABAAEACQAIAAAAAAAKABEAAAAAAAAAAAAAAAAABAAAAAEAAQAKAAkAAAAAAAsAEgAAAAAAAAAAAAAAAAAIAAAAAwADAAkACAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIC/AAAAAAAAAAAMAA0ADgATABQAFQAPAAAABAAAAAEAAQAOAAsAAAAAAA8AFgAAAAAAAAAAAAAAAAAIAAAAAwADAAkACAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAQABEAEgAXABgAGQATAAAABAAAAAEAAQASAA0AAAAAABMAGgAAAAAAAAAAAAAAAAAPAAAABgAAACAAAABsAAAAuAAAAAQBAABQAQAAnAEAADNIqFpNaXJyb3JMAP7+/v4AAAAAAAAAAAAAAAAAAIA/AACAPwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgD8AAIA/AAAAAAAAAAChUDR5TWlycm9yUgD+/v7+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAIA/AACAPwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgD8AAIA/up5x80xBcm0A/v7+/v7+/gAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAPwAAgD8AAAAAAAAAAHLblj1SQXJtAP7+/v7+/v4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAPwAAgD80kcxHTFJBcm0A/v7+/v7+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACamZk+AAAAAAAAAAAAAIA/AACAPwAAgD8AAIA/e/PmEFVCb2R5AP7+/v7+/gAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACamZk+AACAPwAAgD8AAIA/AACAPwAAgD8AAIA/AACAPxQAAAABAAAAkcSkPAIAAABasAtjAwAAAJOZUmUDAAAAp7V9FAQAAABAhIcJBQAAAPSkPtYFAAAA3aDW7gYAAADTyPN9BwAAAJEA9TYIAAAASqSpZgkAAABGzYJpCgAAAHeNPf8LAAAAuLhQXQsAAAA12DHZCwAAAKJAGtMMAAAAJV2prg0AAABooLxBDQAAAFt2IC8NAAAA/JCidA4AAADRkwUh'
+          python - <<'PY'
+          from pathlib import Path
+          import os,base64
+          p=Path('gani-viewer-src/src/main.cpp')
+          s=p.read_text()
+          s=s.replace('#include <shellapi.h>\n#include <gl/GL.h>', '#include <shellapi.h>\n#include <gl/GL.h>\n#include "rig_embedded.h"')
+          old='''static std::vector<uint8_t> readFile(const fs::path&p){\n    std::ifstream f(p,std::ios::binary);\n    if(!f) throw std::runtime_error("Unable to open file");\n    f.seekg(0,std::ios::end); auto n=f.tellg(); f.seekg(0);\n    if(n<=0) throw std::runtime_error("Empty file");\n    std::vector<uint8_t>b(size_t(n)); f.read(reinterpret_cast<char*>(b.data()),n);\n    if(!f) throw std::runtime_error("Read failed"); return b;\n}\n'''
+          new='''static std::wstring win32LongPath(const fs::path& p){\n    std::wstring w=p.wstring();\n    if(w.rfind(L"\\\\?\\",0)==0) return w;\n    if(w.size()<240) return w;\n    if(w.rfind(L"\\\\",0)==0) return L"\\\\?\\UNC\\"+w.substr(2);\n    if(p.is_absolute()) return L"\\\\?\\"+w;\n    return w;\n}\nstatic std::vector<uint8_t> readFile(const fs::path&p){\n    std::wstring wp=win32LongPath(p);\n    HANDLE h=CreateFileW(wp.c_str(),GENERIC_READ,FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,nullptr,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,nullptr);\n    if(h==INVALID_HANDLE_VALUE) throw std::runtime_error("Unable to open file (Win32 error "+std::to_string(GetLastError())+")");\n    LARGE_INTEGER sz{}; if(!GetFileSizeEx(h,&sz)||sz.QuadPart<=0||sz.QuadPart>0x7fffffffLL){DWORD e=GetLastError();CloseHandle(h);throw std::runtime_error("Invalid/empty file (Win32 error "+std::to_string(e)+")");}\n    std::vector<uint8_t> b(static_cast<size_t>(sz.QuadPart));\n    size_t done=0; while(done<b.size()){DWORD want=DWORD(std::min<size_t>(b.size()-done,1u<<20)),got=0;if(!ReadFile(h,b.data()+done,want,&got,nullptr)||got==0){DWORD e=GetLastError();CloseHandle(h);throw std::runtime_error("Read failed (Win32 error "+std::to_string(e)+")");}done+=got;}\n    CloseHandle(h); return b;\n}\n'''
+          assert old in s
+          s=s.replace(old,new)
+          s=s.replace('static std::vector<Bone> parseASK(const fs::path&path){\n    auto b=readFile(path); uint32_t version=', 'static std::vector<Bone> parseASKBytes(const std::vector<uint8_t>& b){\n    uint32_t version=')
+          s=s.replace('    return out;\n}\nstatic std::vector<RigUnit> parseFRIG(const fs::path&path){\n    auto b=readFile(path);', '    return out;\n}\nstatic std::vector<Bone> parseASK(const fs::path&path){ return parseASKBytes(readFile(path)); }\nstatic std::vector<RigUnit> parseFRIGBytes(const std::vector<uint8_t>& b){')
+          needle='''        out.push_back(std::move(u));\n    }\n    return out;\n}\n\nclass BitReader'''
+          assert needle in s
+          s=s.replace(needle,'''        out.push_back(std::move(u));\n    }\n    return out;\n}\nstatic std::vector<RigUnit> parseFRIG(const fs::path&path){ return parseFRIGBytes(readFile(path)); }\n\nclass BitReader''')
+          s=s.replace('fs::path exeDir,askPath,frigPath,ganiPath; std::unique_ptr<Scene> scene;', 'fs::path exeDir,askPath,frigPath,ganiPath; bool useEmbeddedRig=true; std::unique_ptr<Scene> scene;')
+          old='auto sc=std::make_unique<Scene>();sc->bones=parseASK(g.askPath);sc->rig=parseFRIG(g.frigPath);sc->motion=parseGANI(g.ganiPath);sc->validate();'
+          assert old in s
+          s=s.replace(old,'''auto sc=std::make_unique<Scene>();\n        if(g.useEmbeddedRig){\n            sc->bones=parseASKBytes(std::vector<uint8_t>(kEmbeddedPES17ASK,kEmbeddedPES17ASK+kEmbeddedPES17ASKSize));\n            sc->rig=parseFRIGBytes(std::vector<uint8_t>(kEmbeddedPES17FRIG,kEmbeddedPES17FRIG+kEmbeddedPES17FRIGSize));\n        }else{ sc->bones=parseASK(g.askPath); sc->rig=parseFRIG(g.frigPath); }\n        sc->motion=parseGANI(g.ganiPath);sc->validate();''')
+          s=s.replace('static void chooseASK(){auto p=openDialog(L"Load animation skeleton ASK",L"ASK skeleton (*.ask)\\0*.ask\\0All files (*.*)\\0*.*\\0\\0");if(!p.empty()){g.askPath=p;if(!g.ganiPath.empty())loadScene();}}', 'static void chooseASK(){auto p=openDialog(L"Load animation skeleton ASK",L"ASK skeleton (*.ask)\\0*.ask\\0All files (*.*)\\0*.*\\0\\0");if(!p.empty()){g.askPath=p;g.useEmbeddedRig=false;if(!g.ganiPath.empty())loadScene();else setStatus(L"External ASK selected; drop/load matching FRIG and GANI");}}')
+          s=s.replace('static void chooseFRIG(){auto p=openDialog(L"Load HumanBody FRIG",L"FRIG rig (*.frig)\\0*.frig\\0All files (*.*)\\0*.*\\0\\0");if(!p.empty()){g.frigPath=p;if(!g.ganiPath.empty())loadScene();}}', 'static void chooseFRIG(){auto p=openDialog(L"Load HumanBody FRIG",L"FRIG rig (*.frig)\\0*.frig\\0All files (*.*)\\0*.*\\0\\0");if(!p.empty()){g.frigPath=p;g.useEmbeddedRig=false;if(!g.ganiPath.empty())loadScene();else setStatus(L"External FRIG selected; drop/load matching ASK and GANI");}}')
+          s=s.replace('static void useBundledRig(){g.askPath=g.exeDir/L"assets"/L"body_anim_skel.ask";g.frigPath=g.exeDir/L"assets"/L"body_skel.frig";if(!g.ganiPath.empty())loadScene();else setStatus(L"Bundled PES17 rig selected");}', 'static void useBundledRig(){g.useEmbeddedRig=true;g.askPath.clear();g.frigPath.clear();if(!g.ganiPath.empty())loadScene();else setStatus(L"Embedded PES17 rig active - drag a .gani anywhere onto this window");}')
+          s=s.replace('static HWND ctl(const wchar_t*klass,const wchar_t*text,DWORD style,int id,HWND parent){return CreateWindowExW(0,klass,text,WS_CHILD|WS_VISIBLE|style,0,0,10,10,parent,HMENU(INT_PTR(id)),GetModuleHandleW(nullptr),nullptr);}\nstatic void initControls', 'static HWND ctl(const wchar_t*klass,const wchar_t*text,DWORD style,int id,HWND parent){return CreateWindowExW(0,klass,text,WS_CHILD|WS_VISIBLE|style,0,0,10,10,parent,HMENU(INT_PTR(id)),GetModuleHandleW(nullptr),nullptr);}\nstatic void enableExplorerDrop(HWND hwnd);\nstatic LRESULT CALLBACK DropSubclassProc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp,UINT_PTR,DWORD_PTR);\nstatic void initControls')
+          s=s.replace('HFONT font=HFONT(GetStockObject(DEFAULT_GUI_FONT));for(HWND h:{g.playBtn,g.backBtn,g.fwdBtn,g.frameLabel,g.speedCombo,g.fpsCombo,g.loopChk,g.inPlaceChk,g.status})SendMessageW(h,WM_SETFONT,WPARAM(font),TRUE);', 'HFONT font=HFONT(GetStockObject(DEFAULT_GUI_FONT));for(HWND h:{g.playBtn,g.backBtn,g.fwdBtn,g.frameLabel,g.speedCombo,g.fpsCombo,g.loopChk,g.inPlaceChk,g.status}){SendMessageW(h,WM_SETFONT,WPARAM(font),TRUE);enableExplorerDrop(h);SetWindowSubclass(h,DropSubclassProc,1,0);} enableExplorerDrop(g.timeline);SetWindowSubclass(g.timeline,DropSubclassProc,1,0);')
+          marker='static LRESULT CALLBACK WndProc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp){'
+          drop='''static std::wstring lowerExt(const fs::path& f){std::wstring ext=f.extension().wstring();std::transform(ext.begin(),ext.end(),ext.begin(),::towlower);return ext;}\nstatic void processDroppedPaths(const std::vector<fs::path>& paths){fs::path pendingGani;bool rigChanged=false;int accepted=0;for(const auto& f:paths){auto ext=lowerExt(f);if(ext==L".gani"){pendingGani=f;accepted++;}else if(ext==L".ask"){g.askPath=f;g.useEmbeddedRig=false;rigChanged=true;accepted++;}else if(ext==L".frig"){g.frigPath=f;g.useEmbeddedRig=false;rigChanged=true;accepted++;}}if(!pendingGani.empty()){g.ganiPath=pendingGani;loadScene();return;}if(rigChanged&&!g.ganiPath.empty()){loadScene();return;}if(accepted)setStatus(L"Rig file(s) accepted. Drop a .gani to play it.");else setStatus(L"Drop .gani, .ask, or .frig files from Windows Explorer");}\nstatic void handleDrop(HDROP d){std::vector<fs::path> paths;UINT n=DragQueryFileW(d,0xFFFFFFFF,nullptr,0);paths.reserve(n);for(UINT i=0;i<n;i++){UINT len=DragQueryFileW(d,i,nullptr,0);std::wstring w(size_t(len)+1,L'\\0');DragQueryFileW(d,i,w.data(),len+1);w.resize(len);paths.emplace_back(w);}DragFinish(d);processDroppedPaths(paths);}\nstatic LRESULT CALLBACK DropSubclassProc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp,UINT_PTR,DWORD_PTR){if(msg==WM_DROPFILES){handleDrop(HDROP(wp));return 0;}return DefSubclassProc(hwnd,msg,wp,lp);}\nstatic void enableExplorerDrop(HWND hwnd){DragAcceptFiles(hwnd,TRUE);ChangeWindowMessageFilterEx(hwnd,WM_DROPFILES,MSGFLT_ALLOW,nullptr);ChangeWindowMessageFilterEx(hwnd,WM_COPYDATA,MSGFLT_ALLOW,nullptr);ChangeWindowMessageFilterEx(hwnd,0x0049,MSGFLT_ALLOW,nullptr);}\n'''
+          assert marker in s
+          s=s.replace(marker,drop+marker)
+          s=s.replace('try{g.hwnd=hwnd;DragAcceptFiles(hwnd,TRUE);createMenuBar(hwnd);', 'try{g.hwnd=hwnd;enableExplorerDrop(hwnd);createMenuBar(hwnd);')
+          old='case WM_DROPFILES:{HDROP d=HDROP(wp);wchar_t p[MAX_PATH];if(DragQueryFileW(d,0,p,MAX_PATH)){fs::path f(p);std::wstring ext=f.extension().wstring();std::transform(ext.begin(),ext.end(),ext.begin(),::towlower);if(ext==L".gani"){g.ganiPath=f;loadScene();}else setStatus(L"Drop a .gani animation file");}DragFinish(d);return 0;}'
+          assert old in s
+          s=s.replace(old,'case WM_DROPFILES:{handleDrop(HDROP(wp));return 0;}')
+          s=s.replace('if(p.extension()==L".gani"){g.ganiPath=p;loadScene();}', 'if(lowerExt(p)==L".gani"){g.ganiPath=p;loadScene();}')
+          s=s.replace('std::max(1,rc.right),h=std::max(1,rc.bottom-CONTROL_BAR_H)', 'std::max(1,int(rc.right)),h=std::max(1,int(rc.bottom)-CONTROL_BAR_H)')
+          p.write_text(s)
+
+          ask=base64.b64decode(os.environ['ASK_B64']); frig=base64.b64decode(os.environ['FRIG_B64'])
+          lines=['#pragma once\n#include <cstddef>\n#include <cstdint>\n']
+          for name,data in [('kEmbeddedPES17ASK',ask),('kEmbeddedPES17FRIG',frig)]:
+              lines.append(f'static const uint8_t {name}[] = {{\n')
+              for i in range(0,len(data),16): lines.append('    '+', '.join(f'0x{x:02X}' for x in data[i:i+16])+',\n')
+              lines.append('};\n'); lines.append(f'static constexpr size_t {name}Size = sizeof({name});\n\n')
+          Path('gani-viewer-src/src/rig_embedded.h').write_text(''.join(lines))
+          Path('gani-viewer-src/README.md').write_text('''# PES GANI Viewer x86 v2\n\nSelf-contained native C++ Win32/OpenGL viewer. PES17 ASK/FRIG are embedded in the EXE.\n\n- Drag .gani directly from Windows Explorer anywhere onto the app.\n- Drop .ask + .frig + .gani together to use a custom rig.\n- Multiple drops and long paths are supported.\n- No Python runtime and no assets folder required for normal PES17 HumanBody GANI playback.\n''')
+          PY
+
+      - name: Configure Win32
+        shell: pwsh
+        run: cmake -S gani-viewer-src -B build -G "Visual Studio 18 2026" -A Win32
+
+      - name: Build Release
+        shell: pwsh
+        run: cmake --build build --config Release --parallel
+
+      - name: Verify genuine PE32 x86 executable
+        shell: pwsh
+        run: |
+          $exe = 'build/Release/GANIViewer.exe'
+          if (!(Test-Path $exe)) { throw 'GANIViewer.exe missing' }
+          $bytes = [IO.File]::ReadAllBytes($exe)
+          $pe = [BitConverter]::ToInt32($bytes, 0x3c)
+          $machine = [BitConverter]::ToUInt16($bytes, $pe + 4)
+          $magic = [BitConverter]::ToUInt16($bytes, $pe + 24)
+          Write-Host ('PE machine = 0x{0:X4}' -f $machine)
+          Write-Host ('Optional-header magic = 0x{0:X4}' -f $magic)
+          Write-Host ('Size = {0} bytes' -f $bytes.Length)
+          if ($machine -ne 0x14c) { throw 'Not IMAGE_FILE_MACHINE_I386' }
+          if ($magic -ne 0x10b) { throw 'Not PE32' }
+          New-Item -ItemType Directory package | Out-Null
+          Copy-Item $exe package/GANIViewer.exe
+          Copy-Item gani-viewer-src/README.md package/README.md
+          Copy-Item -Recurse gani-viewer-src package/source
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GANIViewer-v2-Win32-x86
+          path: package
+          if-no-files-found: error
+          retention-days: 1
