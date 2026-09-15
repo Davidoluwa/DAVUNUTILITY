@@ -26,7 +26,7 @@ jobs:
 
       - name: Configure Win32
         shell: pwsh
-        run: cmake -S gani-viewer-src -B build -G "Visual Studio 17 2022" -A Win32
+        run: cmake -S gani-viewer-src -B build -G "Visual Studio 18 2026" -A Win32
 
       - name: Build Release
         shell: pwsh
