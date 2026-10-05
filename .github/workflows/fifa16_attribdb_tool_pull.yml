@@ -1,4 +1,4 @@
-# trigger corrected checkpoint relay
+# trigger corrected checkpoint relay v2
 name: Temporary Gemma Release Relay
 on:
   push:
@@ -31,6 +31,6 @@ jobs:
         run: |
           set -euo pipefail
           TAG='gemma-relay-temp-20261005'
-          gh release delete "$TAG" --yes --cleanup-tag 2>/dev/null || true
-          gh release create "$TAG" --target "$GITHUB_SHA" --title 'Temporary Gemma 4 E4B Relay' --notes 'Temporary transport release for Gemma 4 E4B Q4_0 GGUF.'
-          gh release upload "$TAG" gemma-4-E4B_q4_0-it.gguf.part* SHA256SUMS.txt
+          gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag 2>/dev/null || true
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title 'Temporary Gemma 4 E4B Relay' --notes 'Temporary transport release for Gemma 4 E4B Q4_0 GGUF.'
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" gemma-4-E4B_q4_0-it.gguf.part* SHA256SUMS.txt
