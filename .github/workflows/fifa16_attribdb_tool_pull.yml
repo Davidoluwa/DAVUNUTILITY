@@ -12,30 +12,13 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
-      - name: Parallel-download and verify Gemma GGUF
+      - name: Download and verify current official Gemma GGUF
         shell: bash
         run: |
           set -euo pipefail
-          URL='https://eu-central.storage.cloudconvert.com/tasks/d0262eaf-36bf-44c1-b245-b6240235b732/gemma-4-E4B_q4_0-it.gguf?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=cloudconvert-production%2F20261005%2Ffra%2Fs3%2Faws4_request&X-Amz-Date=20261005T144240Z&X-Amz-Expires=86400&X-Amz-Signature=8594638eda0b59028ae953b40308d347c652705d87d4640341d572350cf32803&X-Amz-SignedHeaders=host&response-content-disposition=attachment%3B%20filename%3D%22gemma-4-E4B_q4_0-it.gguf%22&x-amz-checksum-mode=ENABLED&x-id=GetObject'
-          TOTAL=5154941280
-          N=8
-          SPAN=$(( (TOTAL + N - 1) / N ))
-          rm -f seg.*
-          for i in $(seq 0 $((N-1))); do
-            start=$((i * SPAN))
-            end=$((start + SPAN - 1))
-            if [ "$end" -ge "$TOTAL" ]; then end=$((TOTAL - 1)); fi
-            expected=$((end - start + 1))
-            (
-              curl -fL --retry 8 --retry-all-errors --retry-delay 1 -r "$start-$end" -o "seg.$i" "$URL"
-              test "$(stat -c%s "seg.$i")" -eq "$expected"
-            ) &
-          done
-          wait
-          for i in $(seq 0 $((N-1))); do cat "seg.$i"; done > gemma-4-E4B_q4_0-it.gguf
-          test "$(stat -c%s gemma-4-E4B_q4_0-it.gguf)" -eq "$TOTAL"
-          echo '09f6f2a1d9ff4a1b7db9cc1aad9c55a9df2f5ec133327a92eab593fcf4360ed0  gemma-4-E4B_q4_0-it.gguf' | sha256sum -c -
-          rm -f seg.*
+          curl -fL --retry 8 --retry-all-errors --retry-delay 2             -o gemma-4-E4B_q4_0-it.gguf             'https://huggingface.co/google/gemma-4-E4B-it-qat-q4_0-gguf/resolve/main/gemma-4-E4B_q4_0-it.gguf?download=true'
+          test "$(stat -c%s gemma-4-E4B_q4_0-it.gguf)" -eq 5154941280
+          echo '676c35070db6dbe52f93e9c864ee0fba4eddea94b9c875d9cb10daff453fbaee  gemma-4-E4B_q4_0-it.gguf' | sha256sum -c -
       - name: Split into release-safe pieces
         shell: bash
         run: |
