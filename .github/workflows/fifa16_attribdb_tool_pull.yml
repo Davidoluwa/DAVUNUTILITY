@@ -1,4 +1,4 @@
-name: FIFA16 AttribDB Tool Pull
+name: Temporary Gemma Relay
 on:
   push:
     paths:
@@ -8,19 +8,21 @@ permissions:
 jobs:
   pull:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - name: Download public AttribDB editor release
+      - name: Download official Gemma 4 E4B GGUF
+        shell: bash
         run: |
           set -euo pipefail
-          curl -fL --retry 5 --retry-all-errors \
-            -o FIFA-16-AttribDB-Editor-v2.5.0.zip \
-            https://github.com/citizenkidd/fifa16-attribdb-editor/releases/download/v2.5.0/FIFA-16-AttribDB-Editor-v2.5.0.zip
-          echo '02f503739ddb9d5b212a78c594498a8a3e3b85dcfa6cd166db9515d3266d9c03  FIFA-16-AttribDB-Editor-v2.5.0.zip' | sha256sum -c -
-          unzip -l FIFA-16-AttribDB-Editor-v2.5.0.zip | head -80
-      - name: Upload tool
+          URL='https://huggingface.co/google/gemma-4-E4B-it-qat-q4_0-gguf/resolve/ce70163b5df4580cf3534f9f373f15c6c6a6c4e9/gemma-4-E4B_q4_0-it.gguf?download=true'
+          curl -fL --retry 8 --retry-all-errors --retry-delay 2 -o gemma-4-E4B_q4_0-it.gguf "$URL"
+          test "$(stat -c%s gemma-4-E4B_q4_0-it.gguf)" -eq 5154941280
+          echo '09f6f2a1d9ff4a1b7db9cc1aad9c55a9df2f5ec133327a92eab593fcf4360ed0  gemma-4-E4B_q4_0-it.gguf' | sha256sum -c -
+      - name: Upload Gemma relay artifact
         uses: actions/upload-artifact@v4
         with:
-          name: fifa16-attribdb-editor-v250
-          path: FIFA-16-AttribDB-Editor-v2.5.0.zip
+          name: gemma-4-e4b-relay
+          path: gemma-4-E4B_q4_0-it.gguf
           compression-level: 0
           retention-days: 1
+          if-no-files-found: error
