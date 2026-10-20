@@ -1,0 +1,837 @@
+diff -ruN a/INSTALL-ON-PHONE/ux/lua/prism/PrismSkin.lua b/INSTALL-ON-PHONE/ux/lua/prism/PrismSkin.lua
+--- a/INSTALL-ON-PHONE/ux/lua/prism/PrismSkin.lua	2026-10-20 10:08:55.555064324 +0000
++++ b/INSTALL-ON-PHONE/ux/lua/prism/PrismSkin.lua	2026-10-20 10:08:55.557490166 +0000
+@@ -106,6 +106,9 @@
+   return true, a, b, c
+ end
+ local clock = (os and os.clock) or function() return 0 end
++-- Real time in whole seconds. libpv's timeouts are real time; os.clock is process cpu time (every thread), which runs at
++-- its own pace while the engine works or waits.
++local wall = (os and os.time) or function() return 0 end
+ 
+ ------------------------------------------------------------------------ expressions (Prism expression AST)
+ -- [prism-expr:begin] (copied by skinstall into lua/prism/jobs/prismexpr.lua: Prism Workers evaluate the same way)
+@@ -2347,6 +2350,9 @@
+   local v = h:match("v=([%d%.]+)")
+   if not v or tonumber(v:match("^(%d+)")) < 4 then G.off = "libpv has Prism Native " .. tostring(v) .. " (4.x needed)"; log("native: " .. G.off); return false end
+   if h:find(";gl=-1", 1, true) or h:find(";touch=-1", 1, true) then G.off = "native reported " .. h; log("native: unavailable (" .. h .. ")"); return false end
++  -- "waitpolls" (R98e libpv): a layer waiting for its ready is dropped only once this thread had its frames, or after
++  -- 30 s; an older libpv drops it 3 s after its open whatever this thread did (see Session:goLive)
++  G.waitLimit = h:find("waitpolls", 1, true) and 30 or 3
+   -- How long may one command be? Some bridges copy into fixed buffers: probe with growing payloads (240, 960, 3800
+   -- bytes) and keep the largest size that came back intact (the limit is that size + 30 for the command head).
+   G.maxCmd = 200
+@@ -2566,6 +2572,20 @@
+     closeShellIfIdle()
+     return
+   end
++  -- "s0": libpv has no layer open. Under live screens (open settled, not on their way out) that means it dropped them
++  -- (see Session:goLive): three polls in a row, then they open again - the ones already shown at once, the others when
++  -- their ready goes.
++  local lost = false
++  if any == "0" then for _, s in pairs(G.sessions) do if not s.dead and not s.leaving and not s.openTok then lost = true break end end end
++  G.lostPolls = lost and (G.lostPolls or 0) + 1 or 0
++  if G.lostPolls >= 3 then
++    G.lostPolls = 0
++    for _, s in pairs(G.sessions) do
++      if not s.dead and not s.leaving and not s.openTok then
++        if s.live then if s:reopen("libpv has no screen open") then s:goLive() end else s.lost = true end
++      end
++    end
++  end
+   -- Per-frame work of skin models (s.onTick; a screen whose stock VM has no update of its own, Settings, still gets
+   -- it). It runs before the repeat check below because libpv's reply stays the same while nothing happens. Every live
+   -- screen polls, so with two screens up a tick comes twice a frame: tick counts are "at least" frames.
+@@ -2594,6 +2614,8 @@
+ --   depsOf, listsOf    stock binding -> derived values / native lists that read it
+ --   providers          stock Subscribe callbacks of the bindings the skin reads (see runProviders)
+ --   dead, leaving, departed, busy, gone   lifecycle flags (see Session:event, setBusy, setGone, fallback, stop)
++--   openWall, live, lost, reopens          when its layer was opened (os.time), its ready went, libpv lost it, how
++--                                          many times it was opened again (see Session:goLive, reopen)
+ local Session = {}
+ Session.__index = Session
+ 
+@@ -2629,10 +2651,10 @@
+   return s
+ end
+ 
+---- Opens the native scene (and the shared shell scene behind it, once) and registers the session. The reply may not
+---- have landed yet: the open is then settled by pollAll on a later frame. Returns false when libpv refused the scene
+---- (the screen then stays stock and the spec id is remembered in G.offScreens).
+-function Session:open()
++--- Sends the open of the session's layer (`flags` "wait" or "wait,back"), after the shell's when the screen has one (a
++--- shell still up is kept). Returns libpv's reply and this open's token (the reply is an older one while this open's
++--- has not landed).
++function Session:sendOpen(flags)
+   local spec = self.spec
+   if spec.shell then
+     local t = token()
+@@ -2642,10 +2664,19 @@
+     if not G.shellOpenLogged then G.shellOpenLogged = true; log("native: shell open -> " .. tostring(r)) end
+   end
+   local tok = token()
++  send("pc3d:ui:open:" .. self.id .. "|" .. spec.scene .. "|" .. tok .. "|" .. flags)
++  self.openWall = wall()   -- libpv drops the layer when its ready has not come 3 s after this (see Session:goLive)
++  return G.getenv("PRISM_UI_LOAD"), tok
++end
++
++--- Opens the native scene (and the shared shell scene behind it, once) and registers the session. The reply may not
++--- have landed yet: the open is then settled by pollAll on a later frame. Returns false when libpv refused the scene
++--- (the screen then stays stock and the spec id is remembered in G.offScreens).
++function Session:open()
++  local spec = self.spec
+   local flags = G.dirBack and "wait,back" or "wait"
+   G.dirBack = nil
+-  send("pc3d:ui:open:" .. self.id .. "|" .. spec.scene .. "|" .. tok .. "|" .. flags)
+-  local r = G.getenv("PRISM_UI_LOAD")
++  local r, tok = self:sendOpen(flags)
+   local mine = type(r) == "string" and r:sub(-#tok - 1) == ":" .. tok
+   if mine and r:sub(1, 3) ~= "ok:" then
+     local why = r:match("^err:(.*):[^:]*$") or r
+@@ -3016,7 +3047,7 @@
+ -- Screens waiting for an overlay they opened while being built come on with it (or when it fails).
+ local function releaseGates(except)
+   for _, o in pairs(G.sessions) do
+-    if o ~= except and not o.dead and o.overlayGate then o.overlayGate = nil; o.readyWait = nil; send("pc3d:ui:ready:" .. o.id) end
++    if o ~= except and not o.dead and o.overlayGate then o.overlayGate = nil; o.readyWait = nil; o:goLive() end
+   end
+ end
+ --- Sets the stock layout's two toggles (nil leaves one as it is): `native` = its touch blocker, `zinc` = its widgets.
+@@ -3157,7 +3188,7 @@
+ function Session:sendReady()
+   self.readyWait = nil
+   releaseGates(self)
+-  send("pc3d:ui:ready:" .. self.id)
++  self:goLive()
+   for _, x in pairs(G.sessions) do if x ~= self then x:clearBusy() end end
+   -- G.readyCount[spec id] = how many times each screen has come on natively (the career boot waits for its loading
+   -- screen's count).
+@@ -3165,6 +3196,44 @@
+   G.readyCount[self.spec.id] = (G.readyCount[self.spec.id] or 0) + 1
+ end
+ 
++--- Sends the ready that starts the screen's transition. libpv drops a layer opened with "wait" whose ready has not come
++--- 3 s (real time) after its open, and the shell with it when no screen is left. After a match the engine keeps this
++--- thread busy or stopped for longer than that (career processing, the save): the ready of the hub and of its Match
++--- Results found nothing, and the hub's stock layout, its widgets hidden for the native screen, showed black until the
++--- back key left the career (R98e). So the layer is opened again first when it may be gone: its open is 3 s or more
++--- back (os.time: more than 2 s; 30 s with an R98e libpv, which keeps a waiting layer while this thread does not run),
++--- or a poll found libpv without any screen.
++function Session:goLive()
++  if self.dead then return end
++  local late = self.openWall ~= nil and wall() - self.openWall >= (G.waitLimit or 3)
++  if late or self.lost then
++    if not self:reopen(late and ("its ready comes " .. tostring(wall() - self.openWall) .. " s after its open") or "libpv has no screen open") then return end
++  end
++  self.lost, self.openWall, self.live = nil, nil, true
++  send("pc3d:ui:ready:" .. self.id)
++end
++
++--- Opens the session's layer again under the same id (libpv replaces whatever is left of it, the shell is opened again
++--- or kept) and sends every value and list again: the new scene has none of them. Not more than 3 times a session, then
++--- the screen goes back to its stock layout; also when libpv refuses the scene. Returns true when the layer is open.
++function Session:reopen(why)
++  if self.dead then return false end
++  self.reopens = (self.reopens or 0) + 1
++  if self.reopens > 3 then log(tostring(self.spec.id) .. ": lost natively again (" .. why .. "), back to its stock layout"); self:fallback("lost natively"); return false end
++  log(tostring(self.spec.id) .. " opens again natively (" .. why .. ")")
++  local r, tok = self:sendOpen("wait")
++  if type(r) == "string" and r:sub(-#tok - 1) == ":" .. tok and r:sub(1, 3) ~= "ok:" then
++    local refused = r:match("^err:(.*):[^:]*$") or r
++    log("native: " .. tostring(self.spec.id) .. " did not open again (" .. tostring(refused) .. ")")
++    self:fallback(refused)
++    return false
++  end
++  self.last = {}
++  for k in pairs(G) do if type(k) == "string" and k:sub(1, 6) == "shell:" then G[k] = nil end end   -- the shell's values, if it went too
++  self:flush(true)
++  return true
++end
++
+ --- Runs the stock Subscribe providers of the bindings the skin reads. A provider that fails is retried on the next
+ --- frames (up to 20 tries): it usually needs state the stock screen sets a little later (a selected row).
+ function Session:runProviders()
+@@ -3213,13 +3282,16 @@
+   local P = G.perf
+   local t0 = clock()
+   self:flush(false)
+-  if self.readyWait then self.readyWait = self.readyWait + 1; if #self.providers == 0 or self.readyWait >= 12 then self:sendReady() end end
++  -- The gates count frames, and libpv waits 3 s of real time for a ready: after a match the engine runs this thread at a
++  -- few frames a second, so a screen comes on 2 s after its open (os.time: 1 to 2 s) whatever the counts say.
++  local due = self.openWall ~= nil and wall() - self.openWall >= 2
++  if self.readyWait then self.readyWait = self.readyWait + 1; if #self.providers == 0 or self.readyWait >= 12 or due then self:sendReady() end end
+   if self.overlayGate then
+     self.overlayGate = self.overlayGate + 1
+-    if self.overlayGate > 45 then
++    if self.overlayGate > 45 or due then
+       self.overlayGate = nil
+-      log(tostring(self.spec.id) .. ": its overlay did not come natively in 45 frames, shown alone")
+-      if #self.providers == 0 then self:sendReady() else self.readyWait = 0 end
++      log(tostring(self.spec.id) .. ": its overlay did not come natively in " .. (due and "2 s" or "45 frames") .. ", shown alone")
++      if #self.providers == 0 or due then self:sendReady() else self.readyWait = 0 end
+     end
+   end
+   if self.departed then
+diff -ruN a/libpv-source/src/prism/pn_core.c b/libpv-source/src/prism/pn_core.c
+--- a/libpv-source/src/prism/pn_core.c	2026-10-20 10:08:55.637337336 +0000
++++ b/libpv-source/src/prism/pn_core.c	2026-10-20 10:08:55.639641646 +0000
+@@ -135,6 +135,17 @@
+     }
+ }
+ 
++/* A layer opened with "wait" that never became ready is dropped: a screen whose open was abandoned must not keep the
++   screens it replaces up (they stay while it waits). R98e: only once the game's Lua has had the time AND the frames to
++   send that ready, 3 s and PN_WAIT_POLLS polls (every live screen polls once a frame; Lua's own gates end after 2 s or
++   45 + 12 frames), or after 30 s whatever it does. After a match the engine keeps the Lua thread busy or stopped for
++   longer than 3 s (career processing, the save): the hub and its Match Results were dropped while their ready was still
++   to come, the shell went with them, and the hub's stock layout (its widgets hidden for the native screen) showed
++   black until the back key left the career. */
++#define PN_WAIT_POLLS 180
++/* a Lua read: the heartbeat of every layer (the watchdog), and one more poll for a waiting one's deadline */
++static void layer_polled(PnLayer *L, double tn) { L->lastPoll = tn; if (L->waiting && L->waitPolls < 0x7FFFFFFFu) L->waitPolls++; }
++
+ static void layers_update(double t, float dt) {
+     int anyContent = 0;
+     for (int i = 0; i < PN_MAX_LAYERS; i++) { PnLayer *L = &pn_s.layers[i]; if (L->state != L_FREE && L->sc && !L->sc->shell && L->state != L_EXIT) anyContent = 1; }
+@@ -142,7 +153,7 @@
+     for (int i = 0; i < PN_MAX_LAYERS; i++) {
+         PnLayer *L = &pn_s.layers[i];
+         if (L->state == L_FREE) continue;
+-        if (L->waiting) { if (t - L->openedAt > 3.0) { PN_WARN("open: layer never became ready, dropped: ", L->id); layer_free(i); } continue; }
++        if (L->waiting) { if ((t - L->openedAt > 3.0 && L->waitPolls >= PN_WAIT_POLLS) || t - L->openedAt > 30.0) { PN_WARN("open: layer never became ready, dropped: ", L->id); layer_free(i); } continue; }
+         if (L->state == L_HELD && !anyWaiting && t - L->heldAt > (L->holdFor > 0 ? L->holdFor : 0.6)) { start_exit(L, TP_FADE, 1, t); PN_LOG2("layer: leaves the screen: ", L->id); }
+         if (L->state == L_EXIT && (float)(t - L->t0) >= L->dur) { layer_free(i); continue; }
+         if (L->departing == 1 && L->state == L_OPEN && t - L->departT0 > 2.0) { L->departing = 2; L->departT0 = t; }
+@@ -167,7 +178,7 @@
+     pn_ensure_init();
+     double tn = now();
+     lock();
+-    for (int i = 0; i < PN_MAX_LAYERS; i++) if (pn_s.layers[i].state != L_FREE) pn_s.layers[i].lastPoll = tn;
++    for (int i = 0; i < PN_MAX_LAYERS; i++) if (pn_s.layers[i].state != L_FREE) layer_polled(&pn_s.layers[i], tn);
+     int any = 0; for (int i = 0; i < PN_MAX_LAYERS; i++) if (pn_s.layers[i].state == L_OPEN) any = 1;
+     int gl = pr_gl_state();
+     PnStr sb; pn_sb_init(&sb, out, cap);
+@@ -382,8 +393,8 @@
+         lock();
+         if (a[n] == '|') {
+             const char *p = a + n + 1;
+-            if (p[0] == '*' && !p[1]) { for (int i = 0; i < PN_MAX_LAYERS; i++) if (pn_s.layers[i].state != L_FREE) pn_s.layers[i].lastPoll = tn; }
+-            else while (*p) { pn_u32 m = field_len(p, ','); int li = layer_find_n(p, m); if (li >= 0) pn_s.layers[li].lastPoll = tn; p += m; if (*p == ',') p++; }
++            if (p[0] == '*' && !p[1]) { for (int i = 0; i < PN_MAX_LAYERS; i++) if (pn_s.layers[i].state != L_FREE) layer_polled(&pn_s.layers[i], tn); }
++            else while (*p) { pn_u32 m = field_len(p, ','); int li = layer_find_n(p, m); if (li >= 0) layer_polled(&pn_s.layers[li], tn); p += m; if (*p == ',') p++; }
+         }
+         int any = 0; for (int i = 0; i < PN_MAX_LAYERS; i++) if (pn_s.layers[i].state == L_OPEN) any = 1;
+         int gl = pr_gl_state();
+@@ -402,7 +413,8 @@
+         PnStr sb; pn_sb_init(&sb, g_reply, 300);
+         pn_sb_add(&sb, "ok;v="); pn_sb_add(&sb, PN_VERSION_STR); pn_sb_add(&sb, ";tok="); pn_sb_add(&sb, tok);
+         pn_sb_add(&sb, ";touch="); pn_sb_int(&sb, pn_s.touchOk); pn_sb_add(&sb, ";gl="); pn_sb_int(&sb, pr_gl_state());
+-        pn_sb_add(&sb, ";caps=layers,lists,motion,theme,chunk;vw="); pn_sb_int(&sb, pn_s.vw); pn_sb_add(&sb, ";vh="); pn_sb_int(&sb, pn_s.vh);
++        /* waitpolls (R98e): a waiting layer is dropped only once Lua had its polls, or after 30 s (layers_update) */
++        pn_sb_add(&sb, ";caps=layers,lists,motion,theme,chunk,waitpolls;vw="); pn_sb_int(&sb, pn_s.vw); pn_sb_add(&sb, ";vh="); pn_sb_int(&sb, pn_s.vh);
+         PN_LOG2("hello: ", g_reply);
+         /* a new PrismSkin (the game reloaded its Lua) knows of no hidden state: start shown */
+         lock(); if (!pn_s.show) { pn_s.show = 1; PN_LOG("ui: shown (a new PrismSkin said hello)"); } unlock();
+diff -ruN a/libpv-source/src/prism/pn_int.h b/libpv-source/src/prism/pn_int.h
+--- a/libpv-source/src/prism/pn_int.h	2026-10-20 10:08:55.647318029 +0000
++++ b/libpv-source/src/prism/pn_int.h	2026-10-20 10:08:55.649581869 +0000
+@@ -203,6 +203,7 @@
+     char id[48];
+     PnScene *sc;
+     pn_u8 state, preset, notrans, waiting;
++    pn_u32 waitPolls;              /* Lua polls since the open while it waits for its ready (the deadline counts them) */
+     pn_s8 dir;                     /* +1 push, -1 back */
+     pn_u32 order;
+     double t0;                     /* transition start (enter or exit) */
+diff -ruN a/project/native/host/pnhost.c b/project/native/host/pnhost.c
+--- a/project/native/host/pnhost.c	2026-10-20 10:08:55.598795911 +0000
++++ b/project/native/host/pnhost.c	2026-10-20 10:08:55.600762002 +0000
+@@ -233,6 +233,10 @@
+ /* what os.getenv("PRISM_UI_EV") returns on the phone: libpv answers the per-frame poll itself */
+ int pnt_poll_env(char *out, unsigned cap) { return pn_poll_env(out, cap); }
+ void pnt_tick(void) { pn_s.frames += 3; }
++/* tests: a layer's state by id: '-' none, 'O' open, 'H' held, 'E' exiting, 'w' opened but waiting for its ready */
++int pnt_layer_state(const char *id) { for (int i = 0; i < PN_MAX_LAYERS; i++) { PnLayer *L = &pn_s.layers[i]; if (L->state != L_FREE && !strcmp(L->id, id)) return L->waiting ? 'w' : "-OHE"[L->state]; } return '-'; }
++/* tests: quads drawn by the last built frame */
++unsigned pnt_quads(void) { return pn_s.quads; }
+ 
+ #ifndef PN_LIB
+ int main(int argc, char **argv) {
+diff -ruN a/project/native/src/prism/pn_core.c b/project/native/src/prism/pn_core.c
+--- a/project/native/src/prism/pn_core.c	2026-10-20 10:08:55.576221859 +0000
++++ b/project/native/src/prism/pn_core.c	2026-10-20 10:08:55.578276420 +0000
+@@ -135,6 +135,17 @@
+     }
+ }
+ 
++/* A layer opened with "wait" that never became ready is dropped: a screen whose open was abandoned must not keep the
++   screens it replaces up (they stay while it waits). R98e: only once the game's Lua has had the time AND the frames to
++   send that ready, 3 s and PN_WAIT_POLLS polls (every live screen polls once a frame; Lua's own gates end after 2 s or
++   45 + 12 frames), or after 30 s whatever it does. After a match the engine keeps the Lua thread busy or stopped for
++   longer than 3 s (career processing, the save): the hub and its Match Results were dropped while their ready was still
++   to come, the shell went with them, and the hub's stock layout (its widgets hidden for the native screen) showed
++   black until the back key left the career. */
++#define PN_WAIT_POLLS 180
++/* a Lua read: the heartbeat of every layer (the watchdog), and one more poll for a waiting one's deadline */
++static void layer_polled(PnLayer *L, double tn) { L->lastPoll = tn; if (L->waiting && L->waitPolls < 0x7FFFFFFFu) L->waitPolls++; }
++
+ static void layers_update(double t, float dt) {
+     int anyContent = 0;
+     for (int i = 0; i < PN_MAX_LAYERS; i++) { PnLayer *L = &pn_s.layers[i]; if (L->state != L_FREE && L->sc && !L->sc->shell && L->state != L_EXIT) anyContent = 1; }
+@@ -142,7 +153,7 @@
+     for (int i = 0; i < PN_MAX_LAYERS; i++) {
+         PnLayer *L = &pn_s.layers[i];
+         if (L->state == L_FREE) continue;
+-        if (L->waiting) { if (t - L->openedAt > 3.0) { PN_WARN("open: layer never became ready, dropped: ", L->id); layer_free(i); } continue; }
++        if (L->waiting) { if ((t - L->openedAt > 3.0 && L->waitPolls >= PN_WAIT_POLLS) || t - L->openedAt > 30.0) { PN_WARN("open: layer never became ready, dropped: ", L->id); layer_free(i); } continue; }
+         if (L->state == L_HELD && !anyWaiting && t - L->heldAt > (L->holdFor > 0 ? L->holdFor : 0.6)) { start_exit(L, TP_FADE, 1, t); PN_LOG2("layer: leaves the screen: ", L->id); }
+         if (L->state == L_EXIT && (float)(t - L->t0) >= L->dur) { layer_free(i); continue; }
+         if (L->departing == 1 && L->state == L_OPEN && t - L->departT0 > 2.0) { L->departing = 2; L->departT0 = t; }
+@@ -167,7 +178,7 @@
+     pn_ensure_init();
+     double tn = now();
+     lock();
+-    for (int i = 0; i < PN_MAX_LAYERS; i++) if (pn_s.layers[i].state != L_FREE) pn_s.layers[i].lastPoll = tn;
++    for (int i = 0; i < PN_MAX_LAYERS; i++) if (pn_s.layers[i].state != L_FREE) layer_polled(&pn_s.layers[i], tn);
+     int any = 0; for (int i = 0; i < PN_MAX_LAYERS; i++) if (pn_s.layers[i].state == L_OPEN) any = 1;
+     int gl = pr_gl_state();
+     PnStr sb; pn_sb_init(&sb, out, cap);
+@@ -382,8 +393,8 @@
+         lock();
+         if (a[n] == '|') {
+             const char *p = a + n + 1;
+-            if (p[0] == '*' && !p[1]) { for (int i = 0; i < PN_MAX_LAYERS; i++) if (pn_s.layers[i].state != L_FREE) pn_s.layers[i].lastPoll = tn; }
+-            else while (*p) { pn_u32 m = field_len(p, ','); int li = layer_find_n(p, m); if (li >= 0) pn_s.layers[li].lastPoll = tn; p += m; if (*p == ',') p++; }
++            if (p[0] == '*' && !p[1]) { for (int i = 0; i < PN_MAX_LAYERS; i++) if (pn_s.layers[i].state != L_FREE) layer_polled(&pn_s.layers[i], tn); }
++            else while (*p) { pn_u32 m = field_len(p, ','); int li = layer_find_n(p, m); if (li >= 0) layer_polled(&pn_s.layers[li], tn); p += m; if (*p == ',') p++; }
+         }
+         int any = 0; for (int i = 0; i < PN_MAX_LAYERS; i++) if (pn_s.layers[i].state == L_OPEN) any = 1;
+         int gl = pr_gl_state();
+@@ -402,7 +413,8 @@
+         PnStr sb; pn_sb_init(&sb, g_reply, 300);
+         pn_sb_add(&sb, "ok;v="); pn_sb_add(&sb, PN_VERSION_STR); pn_sb_add(&sb, ";tok="); pn_sb_add(&sb, tok);
+         pn_sb_add(&sb, ";touch="); pn_sb_int(&sb, pn_s.touchOk); pn_sb_add(&sb, ";gl="); pn_sb_int(&sb, pr_gl_state());
+-        pn_sb_add(&sb, ";caps=layers,lists,motion,theme,chunk;vw="); pn_sb_int(&sb, pn_s.vw); pn_sb_add(&sb, ";vh="); pn_sb_int(&sb, pn_s.vh);
++        /* waitpolls (R98e): a waiting layer is dropped only once Lua had its polls, or after 30 s (layers_update) */
++        pn_sb_add(&sb, ";caps=layers,lists,motion,theme,chunk,waitpolls;vw="); pn_sb_int(&sb, pn_s.vw); pn_sb_add(&sb, ";vh="); pn_sb_int(&sb, pn_s.vh);
+         PN_LOG2("hello: ", g_reply);
+         /* a new PrismSkin (the game reloaded its Lua) knows of no hidden state: start shown */
+         lock(); if (!pn_s.show) { pn_s.show = 1; PN_LOG("ui: shown (a new PrismSkin said hello)"); } unlock();
+diff -ruN a/project/native/src/prism/pn_int.h b/project/native/src/prism/pn_int.h
+--- a/project/native/src/prism/pn_int.h	2026-10-20 10:08:55.587813280 +0000
++++ b/project/native/src/prism/pn_int.h	2026-10-20 10:08:55.589947543 +0000
+@@ -203,6 +203,7 @@
+     char id[48];
+     PnScene *sc;
+     pn_u8 state, preset, notrans, waiting;
++    pn_u32 waitPolls;              /* Lua polls since the open while it waits for its ready (the deadline counts them) */
+     pn_s8 dir;                     /* +1 push, -1 back */
+     pn_u32 order;
+     double t0;                     /* transition start (enter or exit) */
+diff -ruN a/project/tests/native/arm_emu_r98e.py b/project/tests/native/arm_emu_r98e.py
+--- a/project/tests/native/arm_emu_r98e.py	1970-01-01 00:00:00.000000000 +0000
++++ b/project/tests/native/arm_emu_r98e.py	2026-10-20 10:08:55.628196455 +0000
+@@ -0,0 +1,50 @@
++"""arm_emu_r98e.py - R98e on the BUILT ARM libpv.so (unicorn, the rig of arm_emu4.py): a layer opened with "wait" is
++kept while the game's Lua thread does not run, and still dropped when Lua runs and never sends its ready.
++
++  venv/bin/python -I tests/native/arm_emu_r98e.py <libpv.so> <ux dir with prism/skins/*.pn + fonts> <fixture.json> [chain]
++
++The poll reply's first flag ("s1" / "s0") says whether libpv has an open layer; a waiting layer counts, and no shell
++is opened here, so it says whether the waiting layer is still there. Every PRISM_UI_EV read is one Lua poll.
++1. hello: the R98e libpv says "waitpolls" in its caps (PrismSkin then waits 30 s before it opens a late screen again)
++2. no poll for 10 s (the Lua thread stopped after a match): the waiting layer is still there; after 30 s it is dropped
++3. Lua polls every frame and never sends the ready: dropped after 3 s, as before
++4. a ready that comes after 12 s without polls finds its layer, which then draws
++Prints PASS/FAIL lines; exit status 1 on failure.
++"""
++import os, sys
++
++HERE = os.path.dirname(os.path.abspath(__file__))
++src = open(os.path.join(HERE, 'arm_emu4.py'), encoding='utf-8').read()
++# reuse arm_emu4.py's emulator (everything before its session)
++exec(src.split('# ------------------------------------------------------------------ the session')[0])
++
++def any_open(): return ENV.get('PRISM_UI_EV', '')[1:2] == '1'   # one poll
++def frames(seconds): swap(int(round(seconds * 60)))
++
++swap(31)
++command('pc3d:ui:hello:r1')
++check('waitpolls' in ENV.get('PRISM_UI', '').split(';caps=')[-1].split(';')[0], '1. hello caps say waitpolls: ' + ENV.get('PRISM_UI', '')[:110])
++
++command('pc3d:ui:open:W#1|prism/skins/MatchResults.pn|t1|wait')
++check(ENV.get('PRISM_UI_LOAD', '') == 'ok:W#1:t1', '2. a layer opens with wait: ' + ENV.get('PRISM_UI_LOAD', ''))
++frames(10.0)
++at10 = any_open()
++frames(21.0)
++check(at10 and not any_open(), '2. no Lua poll for 10 s: the waiting layer is still there (%s); after 31 s it is dropped (%s)' % (at10, any_open()))
++
++command('pc3d:ui:open:W#2|prism/skins/MatchResults.pn|t2|wait')
++for _ in range(150):
++    ENV.get('PRISM_UI_EV'); swap(1)
++at25 = any_open()
++for _ in range(60):
++    ENV.get('PRISM_UI_EV'); swap(1)
++check(at25 and not any_open(), '3. Lua polls every frame, no ready: there at 2.5 s (%s), dropped by 3.5 s (%s)' % (at25, any_open()))
++
++command('pc3d:ui:open:W#3|prism/skins/MatchResults.pn|t3|wait')
++frames(12.0)
++command('pc3d:ui:ready:W#3')
++d0 = len(GL['draws']); swap(30); drawn = len(GL['draws']) - d0
++check(any_open() and drawn > 0, '4. a ready 12 s late (Lua stopped) finds its layer, and it draws: %d GL draws in 30 frames' % drawn)
++
++print('ALL PASS' if not FAILS else '%d FAILED' % len(FAILS))
++sys.exit(1 if FAILS else 0)
+diff -ruN a/project/tests/run_all.sh b/project/tests/run_all.sh
+--- a/project/tests/run_all.sh	2026-10-20 10:08:55.608499185 +0000
++++ b/project/tests/run_all.sh	2026-10-20 10:08:55.610330510 +0000
+@@ -23,11 +23,13 @@
+ echo "== Prism Native build";   sh "$HERE/native/build.sh" | sed 's/^/   /'
+ if [ -f "${ANGLE_DIR:-/opt/pw-browsers/chromium-1194/chrome-linux}/libGLESv2.so" ]; then
+   echo "== Prism Native e2e (Lua <-> native C <-> GLES)"; python3 "$HERE/tests/test_native_e2e.py" "$TMP/ux" "$HERE/native/build/libpnhost.so" 2>&1 | grep -E "FAIL|ALL PASS|FAILED"
++  echo "== R98e match exit (the Lua thread stopped / slow)"; python3 "$HERE/tests/test_r98e_matchexit.py" "$TMP/ux" "$HERE/native/build/libpnhost.so" 2>/dev/null | grep -E "FAIL|ALL PASS|FAILED"
+ fi
+ if [ -n "${PRISM_LIBPV:-}" ] && [ -n "${PRISM_EMU_PY:-}" ]; then
+   echo "== libpv ARM build in the emulator"
+   node "$HERE/tests/native/scene_script.js" "$TMP/ux" CareerHub "$TMP/ch.txt" "$TMP/x.ppm" 1 >/dev/null && grep '^vals ' "$TMP/ch.txt" | sed 's/^vals //' > "$TMP/ch_vals.txt"
+   "$PRISM_EMU_PY" "$HERE/tests/native/arm_emu.py" "$PRISM_LIBPV" "$TMP/ux" "$TMP/ch_vals.txt" 2>&1 | grep -E "FAIL|ALL PASS|FAILED|instructions"
++  "$PRISM_EMU_PY" "$HERE/tests/native/arm_emu_r98e.py" "$PRISM_LIBPV" "$TMP/ux" "$HERE/tests/native/fixtures/Standings.scan.json" chain 2>&1 | grep -E "FAIL|ALL PASS|FAILED"
+ fi
+ echo "== validate tree";      node "$HERE/tools/prismc.js" validate --ux "$TMP/ux" | sed -n '1,4p'
+ PV="$HERE/preview/prism-preview.html"; [ -f "$PV" ] || PV="$HERE/../prism-preview.html"
+diff -ruN a/project/tests/test_r98e_matchexit.py b/project/tests/test_r98e_matchexit.py
+--- a/project/tests/test_r98e_matchexit.py	1970-01-01 00:00:00.000000000 +0000
++++ b/project/tests/test_r98e_matchexit.py	2026-10-20 10:08:55.619732584 +0000
+@@ -0,0 +1,258 @@
++"""test_r98e_matchexit.py - R98e: no black screen when the career hub comes back after a match.
++
++The REAL PrismSkin.lua (Lua 5.1) drives the REAL Prism Native C (libpnhost.so on ANGLE/SwiftShader) through the same
++F16Service channel as the phone, with the engine's two threads played separately: the game's Lua thread (screen
++updates, the only place PrismSkin runs) and the render thread (eglSwapBuffers: libpv's frame, its timeouts).
++
++  venv/bin/python -I tests/test_r98e_matchexit.py <ux with prism/skins> <libpnhost.so> [PrismSkin.lua] [--libpv-r97]
++
++The bug (preview.log, R98d): after a match the hub (MatchSelect) opens Match Results from its constructor and waits for
++it, both opened with "wait". libpv drops a waiting layer 3 s (real time) after its open; PrismSkin counted its gates in
++FRAMES of the Lua thread, which the engine keeps busy or stopped for seconds after a match (career processing, the save).
++Both layers were dropped, the shell went with them, the ready that came later found nothing, and the stock layout under
++the hub (widgets hidden for the native screen) showed black until the back key left the career.
++
++1. the Lua thread stops for 16 s after the hub opens and the results open (a played match): the hub and the results
++   come on once it runs again
++2. the Lua thread runs at 2.5 fps and the results open 2.8 s after the hub (a simulated match): both come on
++3. a normal exit (60 fps): the hub and the results come on together in one go, and nothing is opened twice
++4. libpv lost a screen that was already up: PrismSkin opens it again within a few frames
++5. (libpv R98e only) a waiting layer is kept while the Lua thread does not run, and still dropped when the Lua thread
++   runs and never sends its ready (or after 30 s whatever happens)
++
++--libpv-r97: the native lib is the R97 one (without the libpv side of the fix): section 5 is skipped, sections 1-4 must
++pass on the PrismSkin side alone.
++"""
++import ctypes, os, sys
++import lupa.lua51 as lupa
++
++ARGS = [a for a in sys.argv[1:] if not a.startswith('--')]
++R97 = '--libpv-r97' in sys.argv
++UX, LIB = ARGS[0], ARGS[1]
++SKIN = ARGS[2] if len(ARGS) > 2 else os.path.join(UX, 'lua/prism/PrismSkin.lua')
++FAILS = []
++W, H = 780, 360     # the phone's 2340x1080 / 3: software GL, and only layer states are checked
++FPS = 60.0          # the Lua thread's frame rate
++RFPS = 20.0         # the render thread's while the Lua thread does not run (libpv's timeouts are real time)
++
++
++def check(c, m):
++    print(('  PASS  ' if c else '  FAIL  ') + m)
++    if not c:
++        FAILS.append(m)
++
++
++pn = ctypes.CDLL(LIB)
++pn.pnt_init.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_char_p]
++pn.pnt_command.argtypes = [ctypes.c_char_p]
++pn.pnt_frames.argtypes = [ctypes.c_int, ctypes.c_double]
++pn.pnt_time.restype = ctypes.c_double
++pn.pnt_poll_env.argtypes = [ctypes.c_char_p, ctypes.c_uint]
++pn.pnt_layer_state.argtypes = [ctypes.c_char_p]
++assert pn.pnt_init(W, H, (os.path.abspath(UX) + '/').encode()) == 0, 'GL init failed'
++libc = ctypes.CDLL(None)
++libc.getenv.restype = ctypes.c_char_p
++POLLBUF = ctypes.create_string_buffer(6400)
++CMDS = []
++
++
++def exec_cmd(c):
++    c = str(c)
++    CMDS.append(c)
++    if c.startswith('pc3d:ui:'):
++        pn.pnt_command(c[5:].encode('utf-8'))
++    return 0
++
++
++def pyenv(k):
++    k = str(k)
++    if k == 'PRISM_UI_EV':   # libpv answers the per-frame poll itself (os.getenv hook)
++        pn.pnt_poll_env(POLLBUF, 6400)
++        return POLLBUF.value.decode('utf-8', 'replace')
++    v = libc.getenv(k.encode())
++    return v.decode('utf-8', 'replace') if v else None
++
++
++def state(layer): return chr(pn.pnt_layer_state(str(layer).encode()))
++def render(seconds):   # the render thread alone
++    n = max(1, int(round(seconds * RFPS)))
++    pn.pnt_frames(n, seconds / n)
++
++
++L = lupa.LuaRuntime(unpack_returned_tuples=True)
++g = L.globals()
++g.PYEXEC = exec_cmd
++g.PYENV = pyenv
++g.PYREAD = lambda p: open(str(p), encoding='utf-8').read()
++g.NOW = lambda: pn.pnt_time()
++g.SKINFILE = SKIN
++L.execute(r'''
++F16_OUT = ""
++F16 = { Cmd = function(c) c = tostring(c); if c:sub(1, 4) == "env:" then local v = PYENV(c:sub(5)); F16_OUT = (v == nil) and "\1" or tostring(v) else PYEXEC(c); F16_OUT = "" end end,
++        Out = function() return F16_OUT end,
++        Tick = function(n) local v = PYENV("PRISM_UI_EV"); return v == nil and "" or tostring(v) end }
++-- the phone's clocks: os.time is real time in whole seconds (the test's clock is libpv's), os.clock process cpu time
++os.time = function() return 1700000000 + math.floor(NOW()) end
++LOGS = {}
++print = function(...) local t = {} for i = 1, select('#', ...) do t[#t + 1] = tostring((select(i, ...))) end LOGS[#LOGS + 1] = table.concat(t, ' ') end
++Skin = assert(loadstring(PYREAD(SKINFILE), '@PrismSkin.lua'))()
++local api = function(name) if name == 'F16Service' then return F16 end return {} end
++function MKIM()
++  local im = { pub = {}, subs = {}, acts = {} }
++  im.Publish = function(b, v) im.pub[b] = v end
++  im.Subscribe = function(b, fn) im.subs[#im.subs + 1] = { b, fn } end
++  im.Unsubscribe = function() end
++  im.Refresh = function() end
++  im.RegisterAction = function(a, fn) im.acts[a] = fn end
++  im.RegisterDataAction = function(b, a, fn) im.acts[a] = fn end
++  im.UnregisterAction = function(a) im.acts[a] = nil end
++  return im
++end
++function MKNAV() return { Event = function() end } end
++-- stand-in screens built the way the engine builds them (test_r68.py), on the real compiled scenes
++function SCREEN(id, opts)
++  opts = opts or {}
++  local C = {}
++  C.__index = C
++  function C.new(cls, init)
++    local o = setmetatable({ im = init.im, nav = init.nav }, cls)
++    -- the stock idiom (Subscribe, then Publish); the provider needs state the screen sets later and fails its first
++    -- opts.failFor calls, as Match Results' do: the screen's ready waits for them (Session.readyWait)
++    local calls = 0
++    o.im.Subscribe('bnd_title', function() calls = calls + 1; if calls <= (opts.failFor or 0) then error('not yet') end; o.im.Publish('bnd_title', id) end)
++    o.im.Publish('bnd_title', id)
++    if opts.onNew then opts.onNew(o) end
++    return o
++  end
++  function C.update() end
++  function C.finalize() end
++  local spec = { id = id, scene = 'prism/skins/' .. id .. '.pn', shell = opts.shell, pass = { bnd_title = 'title' }, actions = {}, zinc = {} }
++  return Skin.wrap(C, spec), spec
++end
++function OPEN(W) local im = MKIM(); local o = W:new({ im = im, nav = MKNAV(), api = api }); return o, im end
++function LAYER(o) local s = rawget(o, '__pskin'); return s and s.id end
++-- the hub after a match: opens the results overlay from its constructor
++HubW = SCREEN('MatchSelect', { shell = 'prism/skins/CareerShell.pn', failFor = 2, onNew = function(o) o.nav.Event(nil, 'evt_show_overlay', { vvm = 'MatchResults.vvm' }) end })
++ResW = SCREEN('MatchResults', { failFor = 10 })
++LIVE = {}
++function LUAFRAME() for _, o in ipairs(LIVE) do o:update(1 / 60) end end
++function LOGHAS(s) for _, l in ipairs(LOGS) do if l:find(s, 1, true) then return true end end return false end
++''')
++
++
++def lua_frame(render_after=1.0 / FPS):
++    """one frame of the game's Lua thread (every live screen updates), then the render thread until the next one"""
++    L.execute('LUAFRAME()')
++    render(render_after)
++
++
++def open_screen(var, cls):
++    L.execute('%s, %sIM = OPEN(%s); LIVE[#LIVE + 1] = %s' % (var, var, cls, var))
++    return L.eval('LAYER(%s)' % var)
++
++
++def close_all():
++    L.execute('for _, o in ipairs(LIVE) do o:finalize() end; LIVE = {}')
++    render(2.0)
++
++
++def opened(layer): return sum(1 for c in CMDS if c.startswith('pc3d:ui:open:%s|' % layer))
++
++
++ok_start = L.eval('Skin ~= nil')
++check(bool(ok_start), 'PrismSkin.lua loaded: %s' % SKIN)
++
++# ---------------------------------------------------------------- 1. the Lua thread stops after a played match
++hub = open_screen('HUB1', 'HubW')
++lua_frame()
++render(1.4)                       # the engine works, only the render thread runs
++res = open_screen('RES1', 'ResW')
++lua_frame()
++render(16.0)                      # career processing: the Lua thread stops for 16 s
++for _ in range(30):
++    lua_frame()
++check(state(hub) == 'O' and state(res) == 'O',
++      '1. Lua thread stopped 16 s after a played match: the hub and the results are on screen once it runs again (hub %s, results %s)' % (state(hub), state(res)))
++check(state('shell') == 'O', '1. the career room (shell) is back behind them (shell %s)' % state('shell'))
++wl = L.eval('Skin.G.waitLimit')
++if R97:
++    check(wl == 3, '1. an R97 libpv (no "waitpolls" in its hello): PrismSkin opens a screen again when its ready is 3 s late (%s)' % wl)
++else:
++    check(wl == 30 and opened(hub) == 1 and opened(res) == 1,
++          '1. libpv kept both layers through the stop ("waitpolls"): nothing was opened twice (limit %s, hub x%d, results x%d)' % (wl, opened(hub), opened(res)))
++close_all()
++
++# ---------------------------------------------------------------- 2. the Lua thread at 2.5 fps after a simulated match
++hub = open_screen('HUB2', 'HubW')
++lua_frame(0.4)
++for _ in range(6):                # 2.8 s at 2.5 fps: Match Sim leaves, the results open late
++    lua_frame(0.4)
++res = open_screen('RES2', 'ResW')
++for _ in range(15):               # 6 s more at 2.5 fps
++    lua_frame(0.4)
++for _ in range(60):
++    lua_frame()
++check(state(hub) == 'O' and state(res) == 'O',
++      '2. Lua thread at 2.5 fps, the results 2.8 s after the hub: both on screen (hub %s, results %s)' % (state(hub), state(res)))
++check(state('shell') == 'O', '2. the shell is up behind them (shell %s)' % state('shell'))
++close_all()
++
++# ---------------------------------------------------------------- 3. a normal exit at 60 fps
++n0 = len(CMDS)
++hub = open_screen('HUB3', 'HubW')
++lua_frame(); lua_frame(); lua_frame()
++early = any(c == 'pc3d:ui:ready:' + hub for c in CMDS[n0:])
++res = open_screen('RES3', 'ResW')
++for _ in range(20):
++    lua_frame()
++c3 = CMDS[n0:]
++ri = [i for i, c in enumerate(c3) if c in ('pc3d:ui:ready:' + hub, 'pc3d:ui:ready:' + res)]
++check(not early and len(ri) == 2 and c3[ri[0]] == 'pc3d:ui:ready:' + hub and ri[1] - ri[0] <= 2,
++      '3. normal exit: the hub is not shown before the results, then both come on in one go (R68 behaviour kept)')
++check(state(hub) == 'O' and state(res) == 'O' and opened(hub) == 1 and opened(res) == 1,
++      '3. both on screen, each opened once (hub %s x%d, results %s x%d)' % (state(hub), opened(hub), state(res), opened(res)))
++close_all()
++
++# ---------------------------------------------------------------- 4. libpv lost a screen that was already up
++hub = open_screen('HUB4', 'HubW')
++res = open_screen('RES4', 'ResW')
++for _ in range(10):
++    lua_frame()
++before = state(hub), state(res)
++pn.pnt_command(('ui:close:' + res).encode()); pn.pnt_command(('ui:close:' + hub).encode()); pn.pnt_command(b'ui:close:shell')
++render(0.5)
++for _ in range(10):
++    lua_frame()
++check(before == ('O', 'O') and state(hub) == 'O' and state(res) == 'O' and state('shell') == 'O',
++      '4. every native layer gone under live screens: PrismSkin opens them again (before %s, now hub %s, results %s, shell %s)' % (before, state(hub), state(res), state('shell')))
++close_all()
++
++# ---------------------------------------------------------------- 5. libpv: the waiting deadline counts the Lua thread's polls
++if R97:
++    print('  SKIP  5. libpv waiting deadline (--libpv-r97)')
++else:
++    pn.pnt_command(b'ui:open:W5|prism/skins/MatchResults.pn|t5|wait')
++    render(10.0)                  # no poll: the Lua thread is stopped
++    s10 = state('W5')
++    render(21.0)
++    check(s10 == 'w' and state('W5') == '-', '5. a waiting layer is kept while the Lua thread is stopped (10 s: %s) and dropped after 30 s (%s)' % (s10, state('W5')))
++    pn.pnt_command(b'ui:open:W6|prism/skins/MatchResults.pn|t6|wait')
++    for _ in range(int(2.5 * FPS)):
++        pn.pnt_poll_env(POLLBUF, 6400); render(1.0 / FPS)
++    s25 = state('W6')
++    for _ in range(int(1.0 * FPS)):
++        pn.pnt_poll_env(POLLBUF, 6400); render(1.0 / FPS)
++    check(s25 == 'w' and state('W6') == '-', '5. the Lua thread runs and polls but never sends the ready: dropped after 3 s as before (2.5 s: %s, 3.5 s: %s)' % (s25, state('W6')))
++    pn.pnt_command(b'ui:open:W7|prism/skins/MatchResults.pn|t7|wait')
++    render(12.0)
++    pn.pnt_command(b'ui:ready:W7')
++    render(0.5)
++    check(state('W7') == 'O', '5. a ready that comes after 12 s of a stopped Lua thread still finds its layer (%s)' % state('W7'))
++    pn.pnt_command(b'ui:close:W7')
++
++logs = list(L.eval('LOGS').values())
++errs = [l for l in logs if 'error in' in l]
++check(not errs, 'no Lua errors in PrismSkin: %s' % errs[:3])
++print('ALL PASS' if not FAILS else '%d FAILED' % len(FAILS))
++sys.stdout.flush()
++os._exit(1 if FAILS else 0)   # no interpreter teardown: ANGLE's own crashes there
+diff -ruN a/project/ux/lua/prism/PrismSkin.lua b/project/ux/lua/prism/PrismSkin.lua
+--- a/project/ux/lua/prism/PrismSkin.lua	2026-10-20 10:08:55.566065138 +0000
++++ b/project/ux/lua/prism/PrismSkin.lua	2026-10-20 10:08:55.568049083 +0000
+@@ -105,6 +105,9 @@
+   return true, a, b, c
+ end
+ local clock = (os and os.clock) or function() return 0 end
++-- Real time in whole seconds. libpv's timeouts are real time; os.clock is process cpu time (every thread), which runs at
++-- its own pace while the engine works or waits.
++local wall = (os and os.time) or function() return 0 end
+ 
+ ------------------------------------------------------------------------ expressions (Prism expression AST)
+ -- [prism-expr:begin] (copied by skinstall into lua/prism/jobs/prismexpr.lua: Prism Workers evaluate the same way)
+@@ -378,6 +381,9 @@
+   local v = h:match("v=([%d%.]+)")
+   if not v or tonumber(v:match("^(%d+)")) < 4 then G.off = "libpv has Prism Native " .. tostring(v) .. " (4.x needed)"; log("native: " .. G.off); return false end
+   if h:find(";gl=-1", 1, true) or h:find(";touch=-1", 1, true) then G.off = "native reported " .. h; log("native: unavailable (" .. h .. ")"); return false end
++  -- "waitpolls" (R98e libpv): a layer waiting for its ready is dropped only once this thread had its frames, or after
++  -- 30 s; an older libpv drops it 3 s after its open whatever this thread did (see Session:goLive)
++  G.waitLimit = h:find("waitpolls", 1, true) and 30 or 3
+   -- How long may one command be? Some bridges copy into fixed buffers: probe with growing payloads (240, 960, 3800
+   -- bytes) and keep the largest size that came back intact (the limit is that size + 30 for the command head).
+   G.maxCmd = 200
+@@ -597,6 +603,20 @@
+     closeShellIfIdle()
+     return
+   end
++  -- "s0": libpv has no layer open. Under live screens (open settled, not on their way out) that means it dropped them
++  -- (see Session:goLive): three polls in a row, then they open again - the ones already shown at once, the others when
++  -- their ready goes.
++  local lost = false
++  if any == "0" then for _, s in pairs(G.sessions) do if not s.dead and not s.leaving and not s.openTok then lost = true break end end end
++  G.lostPolls = lost and (G.lostPolls or 0) + 1 or 0
++  if G.lostPolls >= 3 then
++    G.lostPolls = 0
++    for _, s in pairs(G.sessions) do
++      if not s.dead and not s.leaving and not s.openTok then
++        if s.live then if s:reopen("libpv has no screen open") then s:goLive() end else s.lost = true end
++      end
++    end
++  end
+   -- Per-frame work of skin models (s.onTick; a screen whose stock VM has no update of its own, Settings, still gets
+   -- it). It runs before the repeat check below because libpv's reply stays the same while nothing happens. Every live
+   -- screen polls, so with two screens up a tick comes twice a frame: tick counts are "at least" frames.
+@@ -625,6 +645,8 @@
+ --   depsOf, listsOf    stock binding -> derived values / native lists that read it
+ --   providers          stock Subscribe callbacks of the bindings the skin reads (see runProviders)
+ --   dead, leaving, departed, busy, gone   lifecycle flags (see Session:event, setBusy, setGone, fallback, stop)
++--   openWall, live, lost, reopens          when its layer was opened (os.time), its ready went, libpv lost it, how
++--                                          many times it was opened again (see Session:goLive, reopen)
+ local Session = {}
+ Session.__index = Session
+ 
+@@ -660,10 +682,10 @@
+   return s
+ end
+ 
+---- Opens the native scene (and the shared shell scene behind it, once) and registers the session. The reply may not
+---- have landed yet: the open is then settled by pollAll on a later frame. Returns false when libpv refused the scene
+---- (the screen then stays stock and the spec id is remembered in G.offScreens).
+-function Session:open()
++--- Sends the open of the session's layer (`flags` "wait" or "wait,back"), after the shell's when the screen has one (a
++--- shell still up is kept). Returns libpv's reply and this open's token (the reply is an older one while this open's
++--- has not landed).
++function Session:sendOpen(flags)
+   local spec = self.spec
+   if spec.shell then
+     local t = token()
+@@ -673,10 +695,19 @@
+     if not G.shellOpenLogged then G.shellOpenLogged = true; log("native: shell open -> " .. tostring(r)) end
+   end
+   local tok = token()
++  send("pc3d:ui:open:" .. self.id .. "|" .. spec.scene .. "|" .. tok .. "|" .. flags)
++  self.openWall = wall()   -- libpv drops the layer when its ready has not come 3 s after this (see Session:goLive)
++  return G.getenv("PRISM_UI_LOAD"), tok
++end
++
++--- Opens the native scene (and the shared shell scene behind it, once) and registers the session. The reply may not
++--- have landed yet: the open is then settled by pollAll on a later frame. Returns false when libpv refused the scene
++--- (the screen then stays stock and the spec id is remembered in G.offScreens).
++function Session:open()
++  local spec = self.spec
+   local flags = G.dirBack and "wait,back" or "wait"
+   G.dirBack = nil
+-  send("pc3d:ui:open:" .. self.id .. "|" .. spec.scene .. "|" .. tok .. "|" .. flags)
+-  local r = G.getenv("PRISM_UI_LOAD")
++  local r, tok = self:sendOpen(flags)
+   local mine = type(r) == "string" and r:sub(-#tok - 1) == ":" .. tok
+   if mine and r:sub(1, 3) ~= "ok:" then
+     local why = r:match("^err:(.*):[^:]*$") or r
+@@ -1047,7 +1078,7 @@
+ -- Screens waiting for an overlay they opened while being built come on with it (or when it fails).
+ local function releaseGates(except)
+   for _, o in pairs(G.sessions) do
+-    if o ~= except and not o.dead and o.overlayGate then o.overlayGate = nil; o.readyWait = nil; send("pc3d:ui:ready:" .. o.id) end
++    if o ~= except and not o.dead and o.overlayGate then o.overlayGate = nil; o.readyWait = nil; o:goLive() end
+   end
+ end
+ --- Sets the stock layout's two toggles (nil leaves one as it is): `native` = its touch blocker, `zinc` = its widgets.
+@@ -1188,7 +1219,7 @@
+ function Session:sendReady()
+   self.readyWait = nil
+   releaseGates(self)
+-  send("pc3d:ui:ready:" .. self.id)
++  self:goLive()
+   for _, x in pairs(G.sessions) do if x ~= self then x:clearBusy() end end
+   -- G.readyCount[spec id] = how many times each screen has come on natively (the career boot waits for its loading
+   -- screen's count).
+@@ -1196,6 +1227,44 @@
+   G.readyCount[self.spec.id] = (G.readyCount[self.spec.id] or 0) + 1
+ end
+ 
++--- Sends the ready that starts the screen's transition. libpv drops a layer opened with "wait" whose ready has not come
++--- 3 s (real time) after its open, and the shell with it when no screen is left. After a match the engine keeps this
++--- thread busy or stopped for longer than that (career processing, the save): the ready of the hub and of its Match
++--- Results found nothing, and the hub's stock layout, its widgets hidden for the native screen, showed black until the
++--- back key left the career (R98e). So the layer is opened again first when it may be gone: its open is 3 s or more
++--- back (os.time: more than 2 s; 30 s with an R98e libpv, which keeps a waiting layer while this thread does not run),
++--- or a poll found libpv without any screen.
++function Session:goLive()
++  if self.dead then return end
++  local late = self.openWall ~= nil and wall() - self.openWall >= (G.waitLimit or 3)
++  if late or self.lost then
++    if not self:reopen(late and ("its ready comes " .. tostring(wall() - self.openWall) .. " s after its open") or "libpv has no screen open") then return end
++  end
++  self.lost, self.openWall, self.live = nil, nil, true
++  send("pc3d:ui:ready:" .. self.id)
++end
++
++--- Opens the session's layer again under the same id (libpv replaces whatever is left of it, the shell is opened again
++--- or kept) and sends every value and list again: the new scene has none of them. Not more than 3 times a session, then
++--- the screen goes back to its stock layout; also when libpv refuses the scene. Returns true when the layer is open.
++function Session:reopen(why)
++  if self.dead then return false end
++  self.reopens = (self.reopens or 0) + 1
++  if self.reopens > 3 then log(tostring(self.spec.id) .. ": lost natively again (" .. why .. "), back to its stock layout"); self:fallback("lost natively"); return false end
++  log(tostring(self.spec.id) .. " opens again natively (" .. why .. ")")
++  local r, tok = self:sendOpen("wait")
++  if type(r) == "string" and r:sub(-#tok - 1) == ":" .. tok and r:sub(1, 3) ~= "ok:" then
++    local refused = r:match("^err:(.*):[^:]*$") or r
++    log("native: " .. tostring(self.spec.id) .. " did not open again (" .. tostring(refused) .. ")")
++    self:fallback(refused)
++    return false
++  end
++  self.last = {}
++  for k in pairs(G) do if type(k) == "string" and k:sub(1, 6) == "shell:" then G[k] = nil end end   -- the shell's values, if it went too
++  self:flush(true)
++  return true
++end
++
+ --- Runs the stock Subscribe providers of the bindings the skin reads. A provider that fails is retried on the next
+ --- frames (up to 20 tries): it usually needs state the stock screen sets a little later (a selected row).
+ function Session:runProviders()
+@@ -1244,13 +1313,16 @@
+   local P = G.perf
+   local t0 = clock()
+   self:flush(false)
+-  if self.readyWait then self.readyWait = self.readyWait + 1; if #self.providers == 0 or self.readyWait >= 12 then self:sendReady() end end
++  -- The gates count frames, and libpv waits 3 s of real time for a ready: after a match the engine runs this thread at a
++  -- few frames a second, so a screen comes on 2 s after its open (os.time: 1 to 2 s) whatever the counts say.
++  local due = self.openWall ~= nil and wall() - self.openWall >= 2
++  if self.readyWait then self.readyWait = self.readyWait + 1; if #self.providers == 0 or self.readyWait >= 12 or due then self:sendReady() end end
+   if self.overlayGate then
+     self.overlayGate = self.overlayGate + 1
+-    if self.overlayGate > 45 then
++    if self.overlayGate > 45 or due then
+       self.overlayGate = nil
+-      log(tostring(self.spec.id) .. ": its overlay did not come natively in 45 frames, shown alone")
+-      if #self.providers == 0 then self:sendReady() else self.readyWait = 0 end
++      log(tostring(self.spec.id) .. ": its overlay did not come natively in " .. (due and "2 s" or "45 frames") .. ", shown alone")
++      if #self.providers == 0 or due then self:sendReady() else self.readyWait = 0 end
+     end
+   end
+   if self.departed then
