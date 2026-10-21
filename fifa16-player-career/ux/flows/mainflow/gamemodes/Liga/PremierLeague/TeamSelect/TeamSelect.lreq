@@ -19,6 +19,6 @@
     "/flows/mainflow/gamemodes/Liga/Util/FCPopup.lua",
     "/flows/mainflow/gamemodes/Liga/Data/PlayerDev.lua",
     "/flows/mainflow/gamemodes/Liga/Data/NativePlayerData.lua",
-    "/flows/mainflow/gamemodes/Liga/Data/PrismProFaces.lua",
+    "/flows/mainflow/gamemodes/Liga/Data/PrismProLook.lua",
     "/flows/mainflow/gamemodes/Liga/Data/PrismPro.lua"
 ]

@@ -15,7 +15,7 @@ currentSelectedTeamID = 10
 
 local PD = dofile(D .. "PlayerDev.lua"); rawset(_G, "PlayerDev", PD)
 local PRO = dofile(D .. "PrismPro.lua")
-dofile(D .. "PrismProFaces.lua")
+dofile(D .. "PrismProLook.lua")
 
 print("== attributes: the overall formula gives exactly the chosen level, focus moves points ==")
 for _, pos in ipairs({ 25, 14, 5, 0, 27, 10, 3 }) do
@@ -39,12 +39,43 @@ local gk = PRO.attrs(0, 70, {}, 5)
 local ix = {}; for i, n in ipairs(PD.ATTRS) do ix[n] = i end
 ck(gk[ix.gkDiving] > gk[ix.finishing] + 15, "a keeper's keeping beats his finishing")
 
-print("== faces ==")
-local T = rawget(_G, "PRISM_PRO_FACES")
-ck(T and T.n == 19407 and #T.labels == 7, "19407 faces in 7 tones")
-local b1 = PRO.faceAt(1, 1, 1); local b2 = PRO.faceAt(1, 1, 2); local bw = PRO.faceAt(7, 99, 40)
-ck(b1 and b2 and b1.id ~= b2.id and b1.club, "faces step")
-ck(bw and bw.id, "a set past the end of a small tone wraps round")
+print("== the look: what the OBB has, the database fields, the names, the bodies ==")
+local L = rawget(_G, "PRISM_PRO_LOOK")
+ck(L and #L.heads == 186 and #L.hairs == 122 and #L.shoes == 172 and #L.eyes == 10, "the generic parts")
+-- every code offered is one libpv's database writer accepts (f16_pro.c COLS), or pro:db refuses the whole look
+local RANGE = { heads = { 0, 8000 }, hairs = { 0, 127 }, shoes = { 0, 1000 }, eyes = { 1, 16 }, brows = { 0, 2 }, sideburns = { 0, 3 },
+  beardColours = { 0, 11 }, beards = { 0, 19 }, skinTypes = { 0, 10 }, tones = { 1, 11 } }
+for k, r in pairs(RANGE) do
+  local bad = {}
+  for _, v in ipairs(L[k]) do if v < r[1] or v > r[2] then bad[#bad + 1] = v end end
+  ck(#bad == 0, k .. " fit the database field (" .. r[1] .. ".." .. r[2] .. "): " .. table.concat(bad, " "))
+end
+ck(#L.brows == 3 and #L.sideburns == 2 and #L.beardColours == 5 and #L.beards == 8 and #L.skinTypes == 3 and #L.tones == 7, "the face grid's axes")
+local st = { id = 7, pos = 25, foot = 2, height = 183, weight = 77, look = { head = 2004, tone = 9, skinType = 1, eyes = 4, brow = 2,
+  side = 1, beard = 5, beardColour = 3, hair = 44, hairColour = 6, boots = 55 } }
+local lf = PRO.fieldList(PRO.lookFields(st))
+ck(lf == "hashighqualityhead=0,headtypecode=2004,headclasscode=1,eyebrowcode=2,sideburnscode=1,facialhaircolorcode=3,facialhairtypecode=5,skintypecode=1,skintonecode=9,eyecolorcode=4,hairtypecode=44,haircolorcode=6,shoetypecode=55,shoecolorcode1=30,shoecolorcode2=31,height=183,weight=77,preferredfoot=2,preferredposition1=25", "the database fields: " .. lf)
+local f1, l1, c1, j1 = PRO.names({ first = "Davun", sur = "Oluwa" })
+ck(f1 == "Davun" and l1 == "Oluwa" and c1 == "D. Oluwa" and j1 == "Oluwa", "names: " .. c1)
+local _, _, c2, j2 = PRO.names({ first = "", sur = "Pele" })
+ck(c2 == "Pele" and j2 == "Pele", "a surname alone")
+ck(PRO.fullName({ first = "Davun", sur = "Oluwa" }) == "Davun Oluwa", "full name")
+local _, _, c3 = PRO.names({ first = "Davun", sur = "Oluwa", last = { { res = "W 1-0" } } })
+ck(c3 == "D. Oluwa", "the match list (st.last) is never taken for the surname: " .. c3)
+local b1 = PRO.pickBody(5, 0)
+ck(b1 and b1.id and b1.club, "a body")
+rawset(_G, "PrismYouth", { isYouth = function(id) return id == b1.id end })
+local b2 = PRO.pickBody(5, 0)
+ck(b2 and b2.id ~= b1.id, "a youth is not taken")
+rawset(_G, "PrismYouth", nil)
+rawset(_G, "PRISM_SQUAD_STATE", { roster = function() return { [b1.id] = 3 } end })
+ck(PRO.pickBody(5, 0).id ~= b1.id, "a player on the roster is not taken")
+rawset(_G, "PRISM_SQUAD_STATE", nil)
+ck(PRO.pickBody(5, b1.club).club ~= b1.club, "nobody of the user's own club")
+local seen = {}
+for k = 1, 50 do seen[PRO.pickBody(k * 7919, 0).id] = true end
+local nseen = 0; for _ in pairs(seen) do nseen = nseen + 1 end
+ck(nseen >= 45, "different seeds, different bodies (" .. nseen .. "/50)")
 
 print("== the team sheet: trust decides, within his line; nobody leaves the squad ==")
 data.InPlayerCareerMode = true
@@ -140,7 +171,7 @@ if I and I.tr then
   ck(t1 == "Flamengo fez uma proposta de £2.5M por você. Seu papel aqui: Jogador-Chave.", "offer: " .. tostring(t1))
   local t2 = I.tr("Santos want you on loan for 6 months. Your role here: Fringe Player.")
   ck(t2 == "Santos quer você emprestado por 6 meses. Seu papel aqui: Sem Espaço.", "loan: " .. tostring(t2))
-  ck(I.tr("Set 12") == "Grupo 12" and I.tr("60 OVR") == "60 GER", "value templates: " .. tostring(I.tr("Set 12")) .. " / " .. tostring(I.tr("60 OVR")))
+  ck(I.tr("60 OVR") == "60 GER" and I.tr("Style 3") ~= "Style 3", "value templates: " .. tostring(I.tr("60 OVR")) .. " / " .. tostring(I.tr("Style 3")))
   ck(I.tr("Striker (ST)") == "Centroavante (ATA)", "positions")
 end
 

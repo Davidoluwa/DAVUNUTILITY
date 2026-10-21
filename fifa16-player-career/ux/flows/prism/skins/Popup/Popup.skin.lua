@@ -23,6 +23,8 @@ local spec = {
     bnd_cs_rst = "bnd_cs_rst",
     bnd_cs_pro = "bnd_cs_pro",
     bnd_cs_std = "bnd_cs_std",
+    bnd_cs_body = "bnd_cs_body",
+    bnd_cs_face = "bnd_cs_face",
     bnd_cs_tn1 = "bnd_cs_tn1",
     bnd_cs_tn2 = "bnd_cs_tn2",
     bnd_cs_tn3 = "bnd_cs_tn3",
@@ -7147,7 +7149,8 @@ spec.model = (function()
     -- The same screen with another set of rows (Player Career's Create Your Player, PrismPro.open): spec.def / spec.tabs
     -- / spec.defaults replace the career settings; spec.title / spec.go / spec.reset are the header and the two button
     -- texts; spec.describe(key, choices) -> title, text replaces a row's description; spec.onChange(choices, key) runs
-    -- after every change (the 3D preview); spec.pro shows the narrow info panel and the 3D model's place (slot 4).
+    -- after every change (the 3D preview); spec.pro shows the narrow info panel and the 3D model's place (slot 4:
+    -- the whole player, or head and shoulders with spec.zoom = "face").
     MODES.setup = { on = "bnd_cs_on", run = function(s, o, spec, pub)
       local DEF = type(spec.def) == "table" and spec.def or DEF
       local TABS = type(spec.tabs) == "table" and spec.tabs or TABS
@@ -7213,6 +7216,9 @@ spec.model = (function()
         pub("bnd_cs_rst", str(spec.reset or "Restore Defaults"))
         pub("bnd_cs_pro", spec.pro and true or false)
         pub("bnd_cs_std", not spec.pro)
+        -- the 3D model's place: the whole player, or head and shoulders on the face page (spec.zoom = "face")
+        pub("bnd_cs_body", (spec.pro and spec.zoom ~= "face") and true or false)
+        pub("bnd_cs_face", (spec.pro and spec.zoom == "face") and true or false)
       end
       local function changed(key)
         if type(spec.onChange) == "function" then pcall(spec.onChange, choices, key) end

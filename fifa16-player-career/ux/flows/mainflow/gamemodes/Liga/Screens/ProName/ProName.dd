@@ -1,0 +1,166 @@
+{
+    "actions": [
+        {
+            "viewname": "act_back",
+            "impl": {
+                "type": "nav",
+                "event": "evt_back"
+            }
+        },
+        {
+            "viewname": "act_e",
+            "actionname": "act_e"
+        },
+        {
+            "viewname": "act_q",
+            "actionname": "act_q"
+        },
+        {
+            "viewname": "act_w",
+            "actionname": "act_w"
+        },
+        {
+            "viewname": "act_e",
+            "actionname": "act_e"
+        },
+        {
+            "viewname": "act_r",
+            "actionname": "act_r"
+        },
+        {
+            "viewname": "act_t",
+            "actionname": "act_t"
+        },
+        {
+            "viewname": "act_y",
+            "actionname": "act_y"
+        },
+        {
+            "viewname": "act_u",
+            "actionname": "act_u"
+        },
+        {
+            "viewname": "act_i",
+            "actionname": "act_i"
+        },
+        {
+            "viewname": "act_o",
+            "actionname": "act_o"
+        },
+        {
+            "viewname": "act_p",
+            "actionname": "act_p"
+        },
+        {
+            "viewname": "act_a",
+            "actionname": "act_a"
+        },
+        {
+            "viewname": "act_s",
+            "actionname": "act_s"
+        },
+        {
+            "viewname": "act_d",
+            "actionname": "act_d"
+        },
+        {
+            "viewname": "act_f",
+            "actionname": "act_f"
+        },
+        {
+            "viewname": "act_g",
+            "actionname": "act_g"
+        },
+        {
+            "viewname": "act_h",
+            "actionname": "act_h"
+        },
+        {
+            "viewname": "act_j",
+            "actionname": "act_j"
+        },
+        {
+            "viewname": "act_k",
+            "actionname": "act_k"
+        },
+        {
+            "viewname": "act_l",
+            "actionname": "act_l"
+        },
+        {
+            "viewname": "act_z",
+            "actionname": "act_z"
+        },
+        {
+            "viewname": "act_x",
+            "actionname": "act_x"
+        },
+        {
+            "viewname": "act_c",
+            "actionname": "act_c"
+        },
+        {
+            "viewname": "act_v",
+            "actionname": "act_v"
+        },
+        {
+            "viewname": "act_b",
+            "actionname": "act_b"
+        },
+        {
+            "viewname": "act_n",
+            "actionname": "act_n"
+        },
+        {
+            "viewname": "act_m",
+            "actionname": "act_m"
+        },
+        {
+            "viewname": "act_backspace",
+            "actionname": "act_backspace"
+        },
+        {
+            "viewname": "act_delete",
+            "actionname": "act_delete"
+        },
+        {
+            "viewname": "act_dot",
+            "actionname": "act_dot"
+        },
+        {
+            "viewname": "act_submit",
+            "actionname": "act_submit"
+        },
+        {
+            "viewname": "act_prism_noop",
+            "actionname": "act_prism_noop"
+        }
+    ],
+    "data": [
+        {
+            "viewname": "bnd_matchday_label",
+            "binding": "bnd_matchday_label",
+            "type": "string"
+        },
+        {
+            "viewname": "bnd_prism_native",
+            "binding": "bnd_prism_native",
+            "type": "bool"
+        },
+        {
+            "viewname": "bnd_prism_zinc",
+            "binding": "bnd_prism_zinc",
+            "type": "bool"
+        },
+        {
+            "viewname": "bnd_kb_crumb",
+            "binding": "bnd_kb_crumb",
+            "type": "string"
+        },
+        {
+            "viewname": "bnd_kb_title",
+            "binding": "bnd_kb_title",
+            "type": "string"
+        }
+    ]
+}

@@ -1,0 +1,19 @@
+{
+    "dds": [
+        "ProName.dd"
+    ],
+    "vms": [
+        [
+            "lua",
+            "ProName__ProName.lua"
+        ]
+    ],
+    "views": [
+        [
+            "gfx",
+            {
+                "layout": "ProName.layout"
+            }
+        ]
+    ]
+}

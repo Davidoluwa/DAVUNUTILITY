@@ -1,0 +1,8 @@
+[
+    "/lua/prism/PrismI18nData.lua",
+    "/lua/prism/PrismI18n.lua",
+    "/lua/prism/PrismJobs.lua",
+    "/lua/prism/PrismSkin.lua",
+    "/lua/prism/PrismTheme.lua",
+    "/flows/prism/skins/Keyboard/Keyboard.skin.lua"
+]

@@ -1,21 +1,25 @@
 --[[ PrismPro.lua - Player Career: the user's own player ("the pro").
 
-The game cannot add a player to its database, and every player has his own head, face and hair models (the database's
-"has high quality head" flag is set for all but a handful of its 57,916 players). A created player is therefore a real
-database row: one of PrismYouth's host bodies (players of clubs in leagues outside the career, PrismProFaces.lua),
-whose face, hair and body are what the user picks. Everything else is the user's build: position, age, potential,
-starting level and where the attribute points go. The body becomes a PrismYouth youth of kind "C" at the user's club
-(PrismYouth.adoptPro), so the squad rows, the saves and the matches treat him like every other youth; PlayerDev tracks
-him from day one with the build's attributes (real matches get them through the engine's match override table, the
-same as all development), and he grows, peaks and declines like everyone else.
+Create Your Player builds a player from nothing the user sees: first name and surname (the career keyboard,
+Liga/Screens/ProName), position, age, foot, height, weight, starting level, potential and where the attribute points go
+(page 1), then the face from the game's generic parts (page 2): head shape, skin tone and type, eye colour, eyebrows,
+sideburns, facial hair and its colour, hairstyle and its colour, boots (PrismProLook.lua lists what the OBB has). A 3D
+model in slot 4 shows every change (libpv's pro:look preview override).
+
+The game cannot add a player to its database, so a created player is a real row under the hood: one of PrismYouth's host
+bodies (a player of a club in a league outside the career) that has an editedplayernames row. The body becomes a
+PrismYouth youth of kind "C" at the user's club (PrismYouth.adoptPro), so the squad rows, the saves and the matches treat
+him like every other youth; PlayerDev tracks him from day one with the build's attributes (real matches get them through
+the engine's match override table, like all development) and he grows, peaks and declines like everyone else. His look,
+height, weight, foot, position and name go into the body's rows of the game's database file (libpv's pro:db / pro:name,
+CRC-checked, written and verified in place, the original kept): the game reads that file when it starts, so matches show
+the created player from the next start of the game (the hub says so once).
 
 The other way into a player career is the stock one: play as a player already in the chosen club's squad
 (PlayerSelector). Both end with sessionVars "PlayerCareerPlayerID" set; PlayerCareer.lua then runs the matchday (the AI
 manager's team sheet, simulating the matches the user's player does not start).
 
-What PrismPro owns
-  * Create Your Player (PRO.open): the Career Setup screen (Popup mode "setup") with its own rows and a 3D model in
-    slot 4, opened from TeamSelect's last boot step for a new player career (PRO.start asks which way first).
+What else PrismPro owns
   * The pro's career: appearances, starts, minutes, goals, assists, man-of-the-match awards, clean sheets and the
     average rating (career, season, the last 10 matches, one line per finished season) from CareerDev.recordMatch.
   * Manager trust (0..100): every match he plays moves it by his rating; each month it drifts towards what his overall
@@ -26,16 +30,19 @@ What PrismPro owns
 
 State: sessionVars "_prismPro" (saved with the career as `pro`, PRO.serialize / PRO.restore):
   { v, id, kind ("new" created / "squad" an existing player), club (the club he started at), org (the body's database
-    club, "new" only), pos (position code 0..27), age (at creation), ovr, pot, b (birth, FIFA day), seed, js (jersey),
-    focus = { pac, sho, pas, dri, def, phy } (-2..2), a0 (the build's attributes as a 66-digit string), pending (the
-    build is waiting for the hub to apply it), trust, car / sea = { apps, starts, mins, goals, assists, motm, cs, rs, rn }
-    (career / this season; rs / rn the rating sum and count), season (the season `sea` belongs to), hist = { { y, club,
-    apps, goals, assists, avg, ovr } } per finished season, last = { { d, opp, r, g, a, m, s, res } } (newest first) }
+    club, "new" only), first, sur (the surname: `last` is the match list), pos (position code 0..27), age (at creation), foot (1 right, 2 left), height, weight,
+    look = { head, tone, skinType, eyes, brow, side, beard, beardColour, hair, hairColour, boots } (database codes),
+    ovr, pot, b (birth, FIFA day), seed, js (jersey), focus = { pac, sho, pas, dri, def, phy } (-2..2), a0 (the build's
+    attributes as a 66-digit string), pending (the build waits for the hub), orig (the body's database values before
+    the first change, pro:get), restart / dbErr (the database file changed / could not be written: the hub says so),
+    trust, car / sea = { apps, starts, mins, goals, assists, motm, cs, rs, rn } (career / this season; rs / rn the rating
+    sum and count), season (the season `sea` belongs to), hist = { { y, club, apps, goals, assists, avg, ovr } } per
+    finished season, last = { { d, opp, r, g, a, m, s, res } } (newest first) }
 
 Hooks (every one guarded; the stock code runs when this module is missing):
   TeamSelect step 5     PRO.start            a new player career: Create Your Player or a squad player
-  MatchSelect (hub)     PRO.bind / PRO.step  applies a pending build, keeps the pro's row and id; asks about offers
-  CareerDev.recordMatch PRO.onMatch          CareerDev.onSeasonEnd   PRO.onSeasonEnd
+  MatchSelect (hub)     PRO.bind / PRO.step  applies a pending build and the look, keeps the pro's row and id; notices
+  CareerDev.recordMatch PRO.onMatch          CareerDev.onSeasonEnd   PRO.onSeasonEnd   CareerDev.onDate   PRO.onMonth
   PlayerCareer          PRO.adjustXI         PrismYouth.seasonEnd    PRO.id (the pro never retires by the roll)
   Serializer / LoadSave PRO.serialize / PRO.restore
   Liga/Cores/tabsData   My Player (PRO.openProfile), My Offers (PRO.offers)
@@ -209,49 +216,74 @@ function PRO.faces(a, gk)
   return out
 end
 
------------------------------------------------------------------------- faces
--- PRISM_PRO_FACES.tones[t] is "<id>:<club> ..." (PrismProFaces.lua); parsed once per tone.
-local FACES_PER_SET = 40
-PRO.FACES_PER_SET = FACES_PER_SET
-local function toneList(t)
-  G.tones = G.tones or {}
-  if G.tones[t] then return G.tones[t] end
-  local T = rawget(_G, "PRISM_PRO_FACES")
+------------------------------------------------------------------------ the look
+-- PRISM_PRO_LOOK (PrismProLook.lua, generated by tools/pro_look.py from the OBB's file list and the database): the
+-- generic face parts the game has, and the bodies (host players with an editedplayernames row).
+local function LOOK() local T = rawget(_G, "PRISM_PRO_LOOK"); return type(T) == "table" and T or {} end
+-- FIFA 16's hair colour codes, commonest first (the preview does not tint hair; matches do)
+PRO.HAIR_COLOURS = { { "Black", 1 }, { "Dark Brown", 3 }, { "Brown", 6 }, { "Light Brown", 5 }, { "Blonde", 0 },
+  { "Ash Blonde", 2 }, { "Platinum Blonde", 4 }, { "Red", 7 }, { "Grey", 9 }, { "White", 8 } }
+-- the database fields of the look, in the order libpv's pro: commands get them
+PRO.LOOK_FIELDS = { "hashighqualityhead", "headtypecode", "headclasscode", "eyebrowcode", "sideburnscode",
+  "facialhaircolorcode", "facialhairtypecode", "skintypecode", "skintonecode", "eyecolorcode", "hairtypecode",
+  "haircolorcode", "shoetypecode", "shoecolorcode1", "shoecolorcode2", "height", "weight", "preferredfoot",
+  "preferredposition1" }
+--- The database fields of a created player (state or build): his generic head and face parts, boots, body and foot.
+--- Every look field is set, so nothing of the body's own look shows through.
+function PRO.lookFields(st)
+  local L = st.look or {}
+  return { hashighqualityhead = 0, headtypecode = L.head, headclasscode = 1, eyebrowcode = L.brow, sideburnscode = L.side,
+    facialhaircolorcode = L.beardColour, facialhairtypecode = L.beard, skintypecode = L.skinType, skintonecode = L.tone,
+    eyecolorcode = L.eyes, hairtypecode = L.hair, haircolorcode = L.hairColour, shoetypecode = L.boots,
+    shoecolorcode1 = 30, shoecolorcode2 = 31, height = st.height, weight = st.weight, preferredfoot = st.foot,
+    preferredposition1 = st.pos }
+end
+local function fieldList(t)
+  local parts = {}
+  for _, k in ipairs(PRO.LOOK_FIELDS) do if tonumber(t[k]) then parts[#parts + 1] = k .. "=" .. floor(tonumber(t[k])) end end
+  return table.concat(parts, ",")
+end
+PRO.fieldList = fieldList
+--- One F16Service command and its reply ("" without the service).
+local function svc(cmd)
+  local f = rawget(_G, "F16_SVC")
+  if not (f and f.Cmd and f.Out) then return "" end
+  local okC = pcall(f.Cmd, cmd)
+  local okO, out = pcall(f.Out)
+  return (okC and okO) and tostring(out or "") or ""
+end
+PRO.svc = svc
+-- The database names of a created player (st.first, st.sur): first name, surname, the short name the game shows
+-- ("F. Surname"), jersey.
+function PRO.names(st)
+  local first, last = tostring(st.first or ""), type(st.sur) == "string" and st.sur or ""
+  local common = (first ~= "" and last ~= "") and (first:sub(1, 1) .. ". " .. last) or (last ~= "" and last or first)
+  return first, last, common:sub(1, 44), (last ~= "" and last or first):sub(1, 44)
+end
+function PRO.fullName(st) local f, l = PRO.names(st); return (f ~= "" and l ~= "") and (f .. " " .. l) or (l ~= "" and l or f) end
+
+-- the bodies "<id>:<club> ..." parsed once
+local function bodies()
+  if G.bodies then return G.bodies end
   local list = {}
-  local s = type(T) == "table" and type(T.tones) == "table" and T.tones[t]
-  if s then for id, club in tostring(s):gmatch("(%d+):(%d+)") do list[#list + 1] = { id = tonumber(id), club = tonumber(club) } end end
-  G.tones[t] = list
+  for id, club in tostring(LOOK().bodies or ""):gmatch("(%d+):(%d+)") do list[#list + 1] = { id = tonumber(id), club = tonumber(club) } end
+  G.bodies = list
   return list
 end
-function PRO.toneLabels()
-  local T = rawget(_G, "PRISM_PRO_FACES")
-  return type(T) == "table" and T.labels or { "Any" }
-end
---- The body for skin tone `tone`, face set `set` and face `face` (wrapping round the tone's list): { id, club }, or nil.
-function PRO.faceAt(tone, set, face)
-  local list = toneList(tonumber(tone) or 1)
+--- A body for a created player: a host player that is not a youth already, not on the career's roster and not at the
+--- user's club, chosen from `seed` so that two careers rarely take the same one. nil when there is none.
+function PRO.pickBody(seed, club)
+  local list = bodies()
   if #list == 0 then return nil end
-  local i = ((tonumber(set) or 1) - 1) * FACES_PER_SET + (tonumber(face) or 1)
-  return list[(i - 1) % #list + 1]
-end
--- A body's database row (name, nationality, jersey): read once from the club's engine lineup, kept for the session.
-local function bodyRow(body, svc)
-  if not body then return nil end
-  G.rows = G.rows or {}
-  local club = G.rows[body.club]
-  if club == nil and svc and svc.GetCurrentPlayerLineup then
-    local ok, rows = pcall(svc.GetCurrentPlayerLineup, 0, body.club, 0)
-    club = {}
-    if ok and type(rows) == "table" then for _, r in ipairs(rows) do local id = tonumber(r.CARD_ID or r.playerID); if id then club[id] = r end end end
-    G.rows[body.club] = club
+  local Y = Ym()
+  local SS = rawget(_G, "PRISM_SQUAD_STATE")
+  local roster = SS and SS.roster and SS.roster() or {}
+  local start = floor(tonumber(seed) or 1) % #list
+  for k = 0, #list - 1 do
+    local b = list[(start + k) % #list + 1]
+    if not (Y and Y.isYouth and Y.isYouth(b.id)) and roster[b.id] == nil and b.club ~= tonumber(club) then return b end
   end
-  return club and club[body.id] or nil
-end
-local function bodyBio(id, svc)
-  local NPD = rawget(_G, "NativePlayerData")
-  if not (NPD and NPD.GetPlayerBio) then return nil end
-  local ok, bio = pcall(NPD.GetPlayerBio, svc, id)
-  return ok and type(bio) == "table" and bio or nil
+  return nil
 end
 
 ------------------------------------------------------------------------ the 3D preview (slot 4)
@@ -260,10 +292,13 @@ local function p3d(action)
   if not (f and f.Cmd) then return false end
   return (pcall(f.Cmd, string.format("pc3d:slot:%d:%s", PRO.SLOT, action)))
 end
-function PRO.show3d(id, club, gk)
+--- Shows body `id` in slot 4 wearing the look of `st` (a build or the state): libpv's preview override, then a rebuild.
+function PRO.show3d(id, club, st)
   id = tonumber(id)
   if not id or id <= 0 then return false end
-  G.shown3d = p3d(string.format("show:%d:%d:%d", id, tonumber(club) or 0, gk and 2 or 0))
+  if st then svc("pro:look:" .. id .. ":" .. fieldList(PRO.lookFields(st))) end
+  G.shown3d = p3d(string.format("show:%d:%d:%d", id, tonumber(club) or 0, (st and st.pos == 0) and 2 or 0))
+  p3d("reinit")
   return G.shown3d
 end
 function PRO.hide3d()
@@ -279,95 +314,145 @@ local function range(a, b, step, fmt)
   for v = a, b, step or 1 do out[#out + 1] = { string.format(fmt or "%d", v), v } end
   return out
 end
+local function counted(list, labels)
+  local out = {}
+  for i, v in ipairs(list or {}) do out[#out + 1] = { labels and labels[i] or (i .. " / " .. #list), v } end
+  if #out == 0 then out[1] = { "1 / 1", 0 } end
+  return out
+end
 local FOCUS_VALUES = { { "Weak", -2 }, { "Below Average", -1 }, { "Balanced", 0 }, { "Strong", 1 }, { "Elite", 2 } }
-local function creatorDef()
-  local pos = {}
-  for _, p in ipairs(PRO.POSITIONS) do pos[#pos + 1] = { p[1], p[2] } end
-  local tones = {}
-  for i, l in ipairs(PRO.toneLabels()) do tones[#tones + 1] = { l, i } end
-  local sets = {}
-  for i = 1, 60 do sets[i] = { "Set " .. i, i } end
-  local focusDesc = "Where the attribute points go. A strength is paid for in the other areas: the overall stays the starting level you chose."
+-- Page 1: the player; page 2: his face.
+local function pageDef(page)
+  if page == 1 then
+    local pos = {}
+    for _, p in ipairs(PRO.POSITIONS) do pos[#pos + 1] = { p[1], p[2] } end
+    local focusDesc = "Where the attribute points go. A strength is paid for in the other areas: the overall stays the starting level you chose."
+    return {
+      pos = { "Position", "Your position on the pitch. The manager picks you for your line: keepers, defenders, midfielders or forwards.", pos },
+      age = { "Age", "How old you are on day one. Young players grow the most; past 29 the decline starts.", range(16, 30) },
+      foot = { "Preferred Foot", "Your stronger foot.", { { "Right", 1 }, { "Left", 2 } } },
+      ovr = { "Starting Level", "Your overall rating on day one. Start low and earn your place, or arrive as a finished player.", range(45, 80, 5, "%d OVR") },
+      pot = { "Potential", "The highest overall you can grow into. Growth comes from playing time, form and training.", range(65, 95, 5, "%d POT") },
+      height = { "Height", "Your height. Taller players win more headers; smaller ones turn quicker.", range(155, 205, 1, "%d cm") },
+      weight = { "Weight", "Your weight.", range(55, 100, 1, "%d kg") },
+      pac = { "Pace", focusDesc, FOCUS_VALUES }, sho = { "Shooting", focusDesc, FOCUS_VALUES },
+      pas = { "Passing", focusDesc, FOCUS_VALUES }, dri = { "Dribbling", focusDesc, FOCUS_VALUES },
+      def = { "Defending", focusDesc, FOCUS_VALUES }, phy = { "Physical", focusDesc, FOCUS_VALUES },
+    }
+  end
+  local L = LOOK()
+  local hc = {}
+  for _, h in ipairs(PRO.HAIR_COLOURS) do hc[#hc + 1] = { h[1], h[2] } end
+  local beards = {}
+  for i, v in ipairs(L.beards or { 0 }) do beards[i] = { v == 0 and "Clean Shaven" or ("Style " .. (i - 1)), v } end
   return {
-    pos = { "Position", "Your position on the pitch. The manager picks you for your line: keepers, defenders, midfielders or forwards.", pos },
-    age = { "Age", "How old you are on day one. Young players grow the most; past 29 the decline starts.", range(16, 30) },
-    ovr = { "Starting Level", "Your overall rating on day one. Start low and earn your place, or arrive as a finished player.", range(45, 80, 5, "%d OVR") },
-    pot = { "Potential", "The highest overall you can grow into. Growth comes from playing time, form and training.", range(65, 95, 5, "%d POT") },
-    pac = { "Pace", focusDesc, FOCUS_VALUES }, sho = { "Shooting", focusDesc, FOCUS_VALUES },
-    pas = { "Passing", focusDesc, FOCUS_VALUES }, dri = { "Dribbling", focusDesc, FOCUS_VALUES },
-    def = { "Defending", focusDesc, FOCUS_VALUES }, phy = { "Physical", focusDesc, FOCUS_VALUES },
-    tone = { "Skin Tone", "Narrows the faces to one skin tone.", tones },
-    face = { "Face", "Your face, hair and build: every face is a real player model, the same one you see in matches.", range(1, FACES_PER_SET) },
-    set = { "More Faces", "Another set of " .. FACES_PER_SET .. " faces of the same skin tone.", sets },
+    head = { "Head Shape", "The shape of your head and face.", counted(L.heads) },
+    tone = { "Skin Tone", "Your skin tone, face and body.", counted(L.tones) },
+    skinType = { "Skin Type", "Your skin's texture.", counted(L.skinTypes) },
+    eyes = { "Eye Colour", "The colour of your eyes.", counted(L.eyes) },
+    brow = { "Eyebrows", "Your eyebrows.", counted(L.brows) },
+    side = { "Sideburns", "Your sideburns.", counted(L.sideburns) },
+    beard = { "Facial Hair", "Your beard or moustache.", beards },
+    beardColour = { "Facial Hair Colour", "The colour of your facial hair.", counted(L.beardColours) },
+    hair = { "Hairstyle", "Your hairstyle.", counted(L.hairs) },
+    hairColour = { "Hair Colour", "The colour of your hair. The preview shows the style; matches show the colour too.", hc },
+    boots = { "Boots", "Your boots.", counted(L.shoes) },
   }
 end
-PRO.CREATOR_TABS = { { "Player", { "pos", "age", "ovr", "pot" } }, { "Attack", { "pac", "sho", "pas", "dri" } },
-  { "Defence", { "def", "phy" } }, { "Look", { "tone", "face", "set" } } }
-PRO.CREATOR_DEFAULTS = { pos = 25, age = 17, ovr = 60, pot = 85, pac = 0, sho = 0, pas = 0, dri = 0, def = 0, phy = 0, tone = 2, face = 1, set = 1 }
-
+PRO.PAGE_TABS = {
+  { { "Player", { "pos", "age", "foot" } }, { "Ability", { "ovr", "pot", "height", "weight" } },
+    { "Attack", { "pac", "sho", "pas", "dri" } }, { "Defence", { "def", "phy" } } },
+  { { "Head", { "head", "tone", "skinType", "eyes" } }, { "Face", { "brow", "side", "beard", "beardColour" } },
+    { "Hair", { "hair", "hairColour" } }, { "Boots", { "boots" } } },
+}
+local function has(list, v) for _, x in ipairs(list or {}) do if x == v then return true end end return false end
+local function pick(list, want) if has(list, want) then return want end return (list or {})[1] or 0 end
+--- The defaults of a page (the face page's from what the game has: its commonest hairstyle and boots when present).
+function PRO.pageDefaults(page)
+  if page == 1 then
+    return { pos = 25, age = 17, foot = 1, ovr = 60, pot = 85, height = 180, weight = 75, pac = 0, sho = 0, pas = 0, dri = 0, def = 0, phy = 0 }
+  end
+  local L = LOOK()
+  return { head = pick(L.heads, 1), tone = pick(L.tones, 5), skinType = pick(L.skinTypes, 0), eyes = pick(L.eyes, 3),
+           brow = pick(L.brows, 1), side = pick(L.sideburns, 0), beard = pick(L.beards, 0), beardColour = pick(L.beardColours, 0),
+           hair = pick(L.hairs, 16), hairColour = 1, boots = pick(L.shoes, 32) }
+end
+local function copyT(t) local o = {} for k, v in pairs(t or {}) do o[k] = v end return o end
 local function focusOf(c) local f = {} for _, k in ipairs(PRO.FOCUS) do f[k] = tonumber(c[k]) or 0 end return f end
-local function seedOf(c) return 1 + ((tonumber(c.pos) or 0) * 7919 + (tonumber(c.tone) or 0) * 104729 + (tonumber(c.set) or 0) * 1299709 + (tonumber(c.face) or 0) * 15485863) % 999983 end
+-- a build (what the creator has so far) as the state's shape, for the preview and the descriptions
+local function buildOf(names, c1, c2)
+  local ovr = tonumber(c1.ovr) or 60
+  return { first = names.first, sur = names.last, pos = tonumber(c1.pos) or 25, age = tonumber(c1.age) or 17,
+           foot = tonumber(c1.foot) or 1, ovr = ovr, pot = max(tonumber(c1.pot) or 85, ovr), height = tonumber(c1.height) or 180,
+           weight = tonumber(c1.weight) or 75, focus = focusOf(c1),
+           look = { head = c2.head, tone = c2.tone, skinType = c2.skinType, eyes = c2.eyes, brow = c2.brow, side = c2.side,
+                    beard = c2.beard, beardColour = c2.beardColour, hair = c2.hair, hairColour = c2.hairColour, boots = c2.boots } }
+end
+local function seedOf(names, c1)
+  local h = 2166136
+  for _, s in ipairs({ tostring(names.first or ""), tostring(names.last or "") }) do for i = 1, #s do h = (h * 31 + s:byte(i)) % 2147483629 end end
+  return 1 + (h + (tonumber(c1.pos) or 0) * 7919 + (tonumber(c1.age) or 0) * 104729) % 999983
+end
 
---- Opens Create Your Player on `popup` (an FCPopup) for club `club` (`clubName` is shown under the rows). `svc` is the
---- SquadMgtService (the faces' names and heights). done(build) with the chosen build, done(nil) after Back. Without the
---- native screens the default build with the first face is used at once.
-function PRO.open(popup, svc, club, clubName, done)
+--- Opens page `page` of Create Your Player on `popup` (an FCPopup). `ctx` = { body, club, clubName, names, c1, c2 }
+--- (the choices so far; the page's own are changed in place). done(true) after the page's button, done(false) after
+--- Back. Without the native screens the page keeps its choices and done(true) runs at once.
+function PRO.openPage(popup, page, ctx, done)
   local PS = rawget(_G, "PrismSetup")
   local native = PS and PS.native and PS.native()
-  local function build(c)
-    local body = PRO.faceAt(c.tone, c.set, c.face)
-    if not body then return nil end
-    local ovr = tonumber(c.ovr) or 60
-    return { body = body, pos = tonumber(c.pos) or 25, age = tonumber(c.age) or 17, ovr = ovr, pot = max(tonumber(c.pot) or 85, ovr),
-             focus = focusOf(c), seed = seedOf(c) }
-  end
+  local key = page == 1 and "c1" or "c2"
+  ctx[key] = ctx[key] or PRO.pageDefaults(page)
   if not native or type(popup) ~= "table" or type(popup.showScreen) ~= "function" then
-    local b = build(PRO.CREATOR_DEFAULTS)
-    log("create: no native screens, the default build" .. (b and (" with body " .. b.body.id) or " (no faces)"))
-    if done then done(b) end
+    log("create: no native screens, page " .. page .. " keeps its defaults")
+    if done then done(true) end
     return false
   end
+  local def = pageDef(page)
   local spec = {
-    def = creatorDef(), tabs = PRO.CREATOR_TABS, defaults = PRO.CREATOR_DEFAULTS, choices = PRO.CREATOR_DEFAULTS,
-    title = "Create Your Player", go = "Start Career", reset = "Reset", club = clubName, pro = true,
+    def = def, tabs = PRO.PAGE_TABS[page], defaults = PRO.pageDefaults(page), choices = copyT(ctx[key]),
+    title = page == 1 and "Create Your Player" or "Create Your Face", go = page == 1 and "Next: Face" or "Start Career",
+    reset = "Reset", club = ctx.clubName, pro = true, zoom = page == 2 and "face" or nil,
     text = "Create Your Player needs the native screens.",
   }
-  spec.describe = function(key, c)
-    local b = build(c)
-    local lines = {}
-    if b then
-      local a = PRO.attrs(b.pos, b.ovr, b.focus, b.seed)
-      local pn = POSNAME[b.pos] or "ST"
-      lines[#lines + 1] = string.format("%s  ·  %d %s  ·  %d %s  ·  %s %d", pn, b.ovr, tr("OVR"), b.pot, tr("POT"), tr("Age"), b.age)
-      local f = PRO.faces(a, b.pos == 0)
+  local function current(c)
+    if page == 1 then return buildOf(ctx.names, c, ctx.c2 or PRO.pageDefaults(2)) end
+    return buildOf(ctx.names, ctx.c1 or PRO.pageDefaults(1), c)
+  end
+  spec.describe = function(k, c)
+    local b = current(c)
+    local lines = { PRO.fullName(b) }
+    local pn = POSNAME[b.pos] or "ST"
+    lines[#lines + 1] = string.format("%s  ·  %d %s  ·  %d %s  ·  %s %d", pn, b.ovr, tr("OVR"), b.pot, tr("POT"), tr("Age"), b.age)
+    if page == 1 then
+      local a = PRO.attrs(b.pos, b.ovr, b.focus, seedOf(ctx.names, c))
       local parts = {}
-      for _, x in ipairs(f) do parts[#parts + 1] = x[1] .. " " .. x[2] end
+      for _, x in ipairs(PRO.faces(a, b.pos == 0)) do parts[#parts + 1] = x[1] .. " " .. x[2] end
       lines[#lines + 1] = table.concat(parts, "   ")
-      local row = bodyRow(b.body, svc)
-      local bio = bodyBio(b.body.id, svc)
-      local who = row and row.playerName or ("#" .. b.body.id)
-      local h = bio and tonumber(bio.height)
-      lines[#lines + 1] = tr("Face") .. ": " .. tostring(who) .. ((h and h >= 140 and h <= 215) and string.format("  ·  %.2f m", h / 100) or "")
     end
-    local d = creatorDef()[key]
+    lines[#lines + 1] = string.format("%d cm  ·  %d kg  ·  %s", b.height, b.weight, tr(b.foot == 2 and "Left" or "Right"))
+    local d = def[k]
     lines[#lines + 1] = ""
     lines[#lines + 1] = d and tr(d[2]) or ""
     return d and d[1] or "", table.concat(lines, "\n")
   end
-  spec.onChange = function(c, key)
-    if key ~= nil and key ~= "tone" and key ~= "face" and key ~= "set" and key ~= "pos" then return end
-    local body = PRO.faceAt(c.tone, c.set, c.face)
-    if body then PRO.show3d(body.id, club, tonumber(c.pos) == 0) end
+  spec.onChange = function(c, k)
+    -- the player page redraws for the kit (a keeper wears the keeper's); the face page for every part
+    if page == 1 and k ~= nil and k ~= "pos" then return end
+    PRO.show3d(ctx.body.id, ctx.club, current(c))
   end
   popup:showScreen("setup", spec, function(n)
-    PRO.hide3d()
     if n == 100 and type(spec.result) == "table" then
-      local b = build(spec.result)
-      if b then log(string.format("create: body %d (club %d), %s, age %d, %d/%d", b.body.id, b.body.club, POSNAME[b.pos] or "?", b.age, b.ovr, b.pot)) end
-      if done then done(b) end
-    elseif done then done(nil) end
+      for k2, v in pairs(spec.result) do if def[k2] then ctx[key][k2] = v end end
+      if done then done(true) end
+    elseif done then done(false) end
   end)
   return true
+end
+
+--- The name entry (Liga/Screens/ProName): the career keyboard as an overlay on `nav`; done(name) or done(nil) for Back.
+function PRO.askName(nav, title, text, done)
+  nav.Event(nil, "evt_show_overlay", { vvm = "/flows/mainflow/gamemodes/Liga/Screens/ProName/ProName.vvm",
+    data = { nav = nav, title = title, crumb = "Create Your Player", text = text or "", max = 20, done = done } })
 end
 
 -- A jersey number for the pro at `club`: his position's classic numbers first, else the first free one.
@@ -389,8 +474,9 @@ local function freeNumber(club, pos)
 end
 
 --- A new player career's way in, at TeamSelect's last boot step (`ts` is the TeamSelect screen: nav, api, loc; its
---- sessionVars are the career's). The user creates a player or picks one of the club's squad; either way the boot ends
---- with evt_team_select. Returns true when PrismPro took over the step (false: the stock PlayerSelector runs).
+--- sessionVars are the career's). The user creates a player (first name, surname, the player page, the face page) or
+--- picks one of the club's squad; either way the boot ends with evt_team_select. Back goes one step back. Returns true
+--- when PrismPro took over the step (false: the stock PlayerSelector runs).
 function PRO.start(ts, sessionVars)
   if type(ts) ~= "table" or type(ts.nav) ~= "table" then return false end
   local FCP = rawget(_G, "PRISM_FCPOPUP")
@@ -400,44 +486,54 @@ function PRO.start(ts, sessionVars)
   if type(sessionVars) == "table" then G.sv = sessionVars end
   local s = sv()
   if not (s and s.set) then return false end
-  -- a new career: the last career's pro is not this one's
-  s.set(PRO.KEY, nil)
+  s.set(PRO.KEY, nil)   -- a new career: the last career's pro is not this one's
   local club = tonumber(rawget(_G, "currentSelectedTeamID"))
-  local okS, svc = pcall(ts.api, "SquadMgtService")
-  svc = okS and svc or nil
   local clubName = ""
   if ts.loc and club then local okN, n = pcall(ts.loc.LocalizeString, "TeamName_Abbr15_" .. club); if okN and n then clubName = n end end
+  local nav = ts.nav
+  local body = PRO.pickBody(os.time and os.time() or 1, club)
+  local ctx = { body = body, club = club, clubName = clubName, names = {} }
   local function enter()
-    ts.nav.Event(nil, "evt_team_select")
-    ts.nav.Event(nil, "evt_hide_overlay", {})
+    PRO.hide3d()
+    nav.Event(nil, "evt_team_select")
+    nav.Event(nil, "evt_hide_overlay", {})
   end
   local function squadPlayer()
-    ts.nav.Event(nil, "evt_show_overlay", { vvm = "/flows/mainflow/gamemodes/Liga/Screens/PlayerCareer/PlayerSelector/PlayerSelector.vvm", data = { nav = ts.nav } })
+    nav.Event(nil, "evt_show_overlay", { vvm = "/flows/mainflow/gamemodes/Liga/Screens/PlayerCareer/PlayerSelector/PlayerSelector.vvm", data = { nav = nav } })
   end
-  local ask
-  local function create()
-    PRO.open(popup, svc, club, clubName, function(b)
-      if not b then ask(); return end
-      local PD = PDm()
-      local td = today() or 0
-      local seed = b.seed
-      local st = { v = PRO.VERSION, id = b.body.id, kind = "new", club = club, org = b.body.club, pos = b.pos, age = b.age,
-                   ovr = b.ovr, pot = b.pot, seed = seed, focus = b.focus, pending = true,
-                   b = td - floor((b.age + 0.5) * 365.2425) + (seed % 180) - 90, js = freeNumber(club, b.pos),
-                   trust = 45, car = emptyStats(), sea = emptyStats(), season = seasonYear(), hist = {}, last = {} }
-      local a = PRO.attrs(b.pos, b.ovr, b.focus, seed)
-      st.a0 = a and packA(a) or nil
-      save(st)
-      s.set("PlayerCareerPlayerID", st.id)
-      enter()
-    end)
+  local ask, askFirst, askLast, page1, page2
+  local function created()
+    local b = buildOf(ctx.names, ctx.c1, ctx.c2)
+    local seed = seedOf(ctx.names, ctx.c1)
+    local td = today() or 0
+    local st = { v = PRO.VERSION, id = body.id, kind = "new", club = club, org = body.club, first = b.first, sur = b.sur,
+                 pos = b.pos, age = b.age, foot = b.foot, height = b.height, weight = b.weight, look = b.look,
+                 ovr = b.ovr, pot = b.pot, seed = seed, focus = b.focus, pending = true,
+                 b = td - floor((b.age + 0.5) * 365.2425) + (seed % 180) - 90, js = freeNumber(club, b.pos),
+                 trust = 45, car = emptyStats(), sea = emptyStats(), season = seasonYear(), hist = {}, last = {} }
+    local a = PRO.attrs(b.pos, b.ovr, b.focus, seed)
+    st.a0 = a and packA(a) or nil
+    save(st)
+    s.set("PlayerCareerPlayerID", st.id)
+    log(string.format("create: %s (body %d of club %d), %s, age %d, %d/%d", PRO.fullName(st), body.id, body.club, POSNAME[b.pos] or "?", b.age, b.ovr, b.pot))
+    enter()
   end
+  page2 = function() PRO.openPage(popup, 2, ctx, function(ok) if ok then created() else page1() end end) end
+  page1 = function() PRO.openPage(popup, 1, ctx, function(ok) if ok then page2() else askLast() end end) end
+  askLast = function()
+    PRO.askName(nav, "Surname", ctx.names.last, function(n) if n then ctx.names.last = n; page1() else askFirst() end end)
+  end
+  askFirst = function()
+    PRO.askName(nav, "First Name", ctx.names.first, function(n) if n then ctx.names.first = n; askLast() else ask() end end)
+  end
+  -- a player career needs a player: Back on the question asks again
   ask = function()
-    -- a player career needs a player: Back asks again
-    popup:getResponse("How do you want to start your player career?", { "Create Your Player", "Play as a Squad Player" }, function(n)
-      if n == 1 then create() elseif n == 2 then squadPlayer() else ask() end
+    local btn = body and { "Create Your Player", "Play as a Squad Player" } or { "Play as a Squad Player" }
+    popup:getResponse("How do you want to start your player career?", btn, function(n)
+      if body and n == 1 then askFirst() elseif (body and n == 2) or (not body and n == 1) then squadPlayer() else ask() end
     end)
   end
+  if not body then log("create: no free body for a created player (PrismProLook.lua); squad players only") end
   ask()
   return true
 end
@@ -454,6 +550,21 @@ local function applyBuild(st, p)
   p.pot = max(st.pot, p.ovr); p.cap = p.pot
   return true
 end
+-- His squad rows (every cached club): his name and position as the career knows them.
+local function refreshRows(st)
+  local s = sv()
+  local cache = s and s.get("TeamCachedData")
+  local Y = Ym()
+  local name = PRO.fullName(st)
+  for _, e in pairs(type(cache) == "table" and cache or {}) do
+    for _, r in ipairs(type(e) == "table" and type(e.players) == "table" and e.players or {}) do
+      if tonumber(r.CARD_ID) == st.id then
+        if name ~= "" then r.playerName = name end
+        if Y and Y.refreshRow then pcall(Y.refreshRow, r) end
+      end
+    end
+  end
+end
 -- Finishes a created player at the hub: the body joins the club (PrismYouth), PlayerDev tracks him with the build.
 local function finish(st)
   local Y, PD, CD = Ym(), PDm(), rawget(_G, "CareerDev")
@@ -461,6 +572,7 @@ local function finish(st)
   local club = tonumber(st.club) or tonumber(rawget(_G, "currentSelectedTeamID"))
   local y, err = Y.adoptPro(st.id, st.org, club, st.b, st.pos, st.pot, st.ovr, st.seed, st.js)
   if not y then log("create: " .. tostring(err)); return false end
+  if PRO.fullName(st) ~= "" then y.nm = PRO.fullName(st) end
   local p = PD.get(st.id)
   if not p and CD and CD.ensure then p = CD.ensure(st.id, club) end
   if not p then
@@ -474,23 +586,48 @@ local function finish(st)
     p.b, p.ovr0 = zero, 0
   end
   applyBuild(st, p)
-  if Y.refreshRow then
-    local s = sv()
-    local cache = s and s.get("TeamCachedData")
-    local e = type(cache) == "table" and cache[club]
-    for _, r in ipairs(type(e) == "table" and type(e.players) == "table" and e.players or {}) do
-      if tonumber(r.CARD_ID) == st.id then pcall(Y.refreshRow, r) end
-    end
-  end
+  refreshRows(st)
   st.pending = nil
-  log(string.format("create: %s is at club %d (%s, %d OVR, %d POT)", tostring(y.nm or st.id), club, POSNAME[st.pos] or "?", p.ovr, p.pot))
+  log(string.format("create: %s is at club %d (%s, %d OVR, %d POT)", PRO.fullName(st), club, POSNAME[st.pos] or "?", p.ovr, p.pot))
   if CD and CD.overridesStale then pcall(CD.overridesStale) end
   return true
 end
+--- A created player's look, body and name in the game's database file (libpv pro:db / pro:name; the game reads the file
+--- when it starts) and in the 3D preview at once (pro:look). The file is checked once per session and written only when
+--- it differs; the first time, the body's own values are kept in st.orig. Sets st.restart when the file changed (the
+--- hub then says so once) and st.dbErr when it could not be written.
+function PRO.applyLook(st)
+  if not (st and st.kind == "new" and st.look) then return end
+  local fields = fieldList(PRO.lookFields(st))
+  svc("pro:look:" .. st.id .. ":" .. fields)
+  G.checked = G.checked or {}
+  if G.checked[st.id] == fields then return end
+  if svc("pro:caps") ~= "pro:1" then st.dbErr = "this APK's libpv cannot write the look (an older build)"; return end
+  if not st.orig then
+    local o = svc("pro:get:" .. st.id)
+    if o ~= "" and o:sub(1, 4) ~= "err:" then st.orig = o end
+  end
+  local r1 = svc("pro:db:" .. st.id .. ":" .. fields)
+  local f, l, c, j = PRO.names(st)
+  -- the surname column as the database keeps it: R98e's is empty in every row (the game shows the common name,
+  -- "F. Surname"), so it is filled only when the body's own row had one
+  local origSur = st.orig and st.orig:match(";[^|]*|([^|]*)|")
+  if not (origSur and origSur ~= "") then l = "" end
+  local r2 = (f ~= "" or c ~= "") and svc(string.format("pro:name:%d:%s|%s|%s|%s", st.id, f, l, c, j)) or "ok:same"
+  log("look: database " .. r1 .. ", names " .. r2)
+  if r1:sub(1, 3) ~= "ok:" or r2:sub(1, 3) ~= "ok:" then
+    st.dbErr = (r1:sub(1, 3) ~= "ok:" and r1 or r2):gsub("^err:", "")
+    return
+  end
+  st.dbErr = nil
+  if r1 ~= "ok:same" or r2 ~= "ok:same" then st.restart = true end
+  G.checked[st.id] = fields
+  save(st)
+end
 
 --- The hub binds (MatchSelect, after CareerDev and PrismYouth): hands over sessionVars, the squad service and the hub's
---- localiser (club names for the offers), applies a pending build, and makes sure the pro's id and his PlayerDev record
---- are there. Does nothing outside a player career.
+--- localiser (club names for the offers), applies a pending build, makes sure the pro's id and his PlayerDev record are
+--- there, and keeps a created player's look in the database and the preview. Does nothing outside a player career.
 function PRO.bind(sessionVars, services, loc)
   if type(sessionVars) == "table" then G.sv = sessionVars end
   if type(services) == "table" then G.svc = services.SquadMgtService or services.SquadManagementService or G.svc end
@@ -516,6 +653,7 @@ function PRO.bind(sessionVars, services, loc)
     local p = CD.ensure(st.id, tonumber(rawget(_G, "currentSelectedTeamID")))
     if p and st.kind == "new" then applyBuild(st, p) end
   end
+  if st.kind == "new" and not st.pending then pcall(refreshRows, st); pcall(PRO.applyLook, st) end
 end
 
 ------------------------------------------------------------------------ manager trust and the team sheet
@@ -736,6 +874,21 @@ function PRO.step(hub)
   G.idle = (G.idle or 0) + 1
   if G.idle < 45 then return end
   G.idle = -600   -- checked again in ten seconds
+  -- a created player's look: written into the database (the game shows it from its next start), or why not; once
+  local st = state()
+  if st and (st.restart or st.dbErr) and not G.noticed and hub.FCPopup then
+    G.noticed = true
+    local msg
+    if st.dbErr then
+      msg = string.format("Your player's face, name and body could not be saved in the game's database (%s). He plays with the body's own look until they are.", tostring(st.dbErr))
+    else
+      msg = "Your player's face, name and body are saved. Restart the game once to see them in matches."
+      st.restart = nil
+      save(st)
+    end
+    hub.FCPopup:getResponse(msg, { "OK" }, function() end)
+    return
+  end
   local PC = rawget(_G, "g_PlayerCareer")
   local o = PC and PC.getOfferForMyPlayer and PC:getOfferForMyPlayer()
   if not o then return end
