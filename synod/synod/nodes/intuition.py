@@ -13,7 +13,7 @@ import numpy as np
 
 from ..beliefs import conf_bucket, erf_conf
 from ..node import Node
-from ..perception import normalize_window, signature
+from ..perception import normalize_window
 from ..protocol import NEURAL, Proposal, Verdict
 
 
@@ -107,7 +107,7 @@ class IntuitionNode(Node):
     def _estimate(self, view, members: int):
         sc = self._outputs(view)
         outs = sc["outs"][:members]
-        sig = signature(view.history, view.tolerance)
+        sig = view.context
         spread = float(np.std(outs, ddof=1)) if members > 1 else 1.0
         noise = math.sqrt(self.resid.get(sig, 1.0))
         sd = math.hypot(spread, noise) * sc["scale"]
@@ -161,7 +161,7 @@ class IntuitionNode(Node):
     def learn(self, view, value, source, record) -> None:
         z, anchor, scale = self._encode(view.history)
         t = float(np.clip((value - anchor) / scale, -20, 20))
-        sig = signature(view.history, view.tolerance)
+        sig = view.context
         if source == "label":
             outs, _ = self.net.forward(z[None, :])
             err = min((float(np.mean(outs)) * self.out_scale - t) ** 2, 25.0)

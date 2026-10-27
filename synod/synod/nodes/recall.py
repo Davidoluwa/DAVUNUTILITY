@@ -9,7 +9,7 @@ from __future__ import annotations
 import numpy as np
 
 from ..node import Node
-from ..perception import normalize_window, signature
+from ..perception import normalize_window
 from ..protocol import NEURAL, Proposal, Verdict
 
 
@@ -67,7 +67,7 @@ class RecallNode(Node):
         sc = self.scratch(view)
         cost = 0.0 if "pred" in sc else self.lookup_cost
         sc = self._lookup(view)
-        sig = signature(view.history, view.tolerance)
+        sig = view.context
         conf = min(self.competence.mean(("p",) + sc["ev"] + sig), 0.99)
         return Proposal(self.name, self.kind, sc["pred"], conf, cost,
                         f"recalls {sc['ev'][1]} match -> {sc['pred']:.2f}", sc["ev"])

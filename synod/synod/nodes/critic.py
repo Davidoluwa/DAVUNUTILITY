@@ -12,7 +12,6 @@ import numpy as np
 
 from ..beliefs import Competence
 from ..node import Node
-from ..perception import signature
 from ..protocol import SYMBOLIC, Verdict
 
 
@@ -110,7 +109,7 @@ class CriticNode(Node):
 
     def critique(self, view, proposal) -> Verdict:
         h, v, tol = view.history, proposal.value, view.tolerance
-        sig = signature(h, tol)
+        sig = view.context
         cost = self.review_cost(view)
         live = [c for c in self.constraints if c.applies(h)]
         trusted = [(c, self.reliability.mean((c.name,) + sig)) for c in live]
@@ -128,7 +127,7 @@ class CriticNode(Node):
         if source != "label":
             return
         h, tol = view.history, view.tolerance
-        sig = signature(h, tol)
+        sig = view.context
         for c in self.constraints:
             if c.applies(h):
                 self.reliability.update((c.name,) + sig, 1.0 if c.holds(h, value, tol) else 0.0)

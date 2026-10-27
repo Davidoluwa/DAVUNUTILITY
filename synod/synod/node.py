@@ -26,7 +26,6 @@ from typing import Optional
 import numpy as np
 
 from .beliefs import ClaimCalibrator, Competence, DriftMonitor
-from .perception import signature
 from .protocol import NEURAL, Bid, Proposal, Record, TaskView, Verdict
 
 
@@ -49,6 +48,7 @@ class Node:
     surprise_at = 0.98  # a miss at this confidence is a 1-in-50 event: check yourself
     glance_value = 0.5  # rough value of producing one bid-worthy option
     curiosity = 0.05  # chance of looking anyway, so a node can find out it got better
+    explore = True  # while learning, bid Thompson samples; when just answering, bid beliefs
     retract_window = 120  # how far back to retract lessons from a peer that broke
     # A learner decides for itself how sure the council must be before it will
     # learn from an unlabeled answer.
@@ -64,6 +64,10 @@ class Node:
         self.review_tnr = Competence(prior_mean=0.85, strength=6.0, decay=0.99)  # endorse | right
         self.review_tpr = Competence(prior_mean=0.6, strength=6.0, decay=0.99)  # reject | wrong
         self.review_answers = Competence(prior_mean=0.7, strength=4.0, decay=0.99)
+        # Same track records, but keyed first by how sure the reviewer said it was,
+        # so a hesitant "no" isn't read with the weight of a confident one.
+        self.review_tnr_ev = Competence(prior_mean=0.85, strength=6.0, decay=0.99)
+        self.review_tpr_ev = Competence(prior_mean=0.6, strength=6.0, decay=0.99)
         self.dissent = Competence(prior_mean=0.5, strength=4.0, decay=0.98)  # counter-proposal right?
         self.drift = DriftMonitor()
         self.status = "healthy"  # healthy | probation | quarantined
@@ -100,6 +104,11 @@ class Node:
     def learn(self, view: TaskView, value: float, source: str, record: Record) -> None:
         """Absorb a labeled or council-certified example."""
 
+    def explain(self, record: Record):
+        """Optionally share an explanation of a settled task with the others
+        (e.g. the program that produces the label). Posted to record.notes."""
+        return None
+
     def repair(self) -> bool:
         """Try to fix yourself after confirmed degradation. True if repaired."""
         return False
@@ -123,7 +132,7 @@ class Node:
         """standing = (node, belief) of the best bid already on the table."""
         if not self.solves or not self.available():
             return None
-        sig = signature(view.history, view.tolerance)
+        sig = view.context
         pressure = view.pressure
 
         # 0. Don't duplicate work: if the table is already covered well enough
@@ -136,10 +145,10 @@ class Node:
 
         # 1. Self-restraint: is it even worth looking? (learned per situation)
         # "usefulness" = how often looking here ends with something worth bidding.
-        worth = self.usefulness.sample(sig, self.rng)
+        worth = self.usefulness.sample(sig, self.rng) if self.explore else self.usefulness.mean(sig)
         est = self.estimate_glance_cost()
         # Under system stress, everyone pays more attention.
-        curious = self.rng.random() < self.curiosity + 0.3 * pressure
+        curious = self.explore and self.rng.random() < self.curiosity + 0.3 * pressure
         if not curious and worth * self.glance_value < objective.cost_weight * est:
             self.stats["declined_unseen"] += 1
             return Decline(self.name, f"rarely useful here (p_useful~{worth:.2f})", 0.0)
@@ -147,9 +156,12 @@ class Node:
         # 2. Look, then bid honestly from the self-model for what was seen.
         evidence, spent, expected = self.glance(view)
         self.scratch(view)["glance_ev"] = evidence
+        if evidence and evidence[-1] == "none":
+            self.stats["declined_seen"] += 1
+            return Decline(self.name, "looked, and has nothing to offer here", spent)
         key = ("g",) + tuple(evidence) + sig
-        p_sample = self.competence.sample(key, self.rng)
         p_mean = self.competence.mean(key)
+        p_sample = self.competence.sample(key, self.rng) if self.explore else p_mean
         useful = objective.decision_value(p_sample, pressure) > objective.cost_weight * expected
         self.usefulness.update(sig, 1.0 if useful else 0.0)
         if not useful:
@@ -183,16 +195,19 @@ class Node:
             gain = value - base - objective.cost_weight * cost
             if gain > best_gain:
                 best, best_gain = name, gain
-        if best is None and options and self.rng.random() < 0.03:
+        if best is None and options and self.explore and self.rng.random() < 0.03:
             # Occasional curiosity keeps our model of reviewers from going stale.
             best = options[self.rng.integers(len(options))][0]
             self.stats["curious_reviews"] += 1
         return best
 
-    def update_belief(self, belief: float, reviewer: str, endorses: bool, sig) -> float:
-        key = (reviewer,) + sig
-        tnr = self.review_tnr.mean(key)
-        tpr = self.review_tpr.mean(key)
+    def update_belief(self, belief: float, reviewer: str, endorses: bool, sig, evidence: tuple = ()) -> float:
+        if evidence:
+            key = (reviewer,) + tuple(evidence) + sig
+            tnr, tpr = self.review_tnr_ev.mean(key), self.review_tpr_ev.mean(key)
+        else:
+            key = (reviewer,) + sig
+            tnr, tpr = self.review_tnr.mean(key), self.review_tpr.mean(key)
         if endorses:
             num, den = belief * tnr, belief * tnr + (1 - belief) * (1 - tpr)
         else:
@@ -222,7 +237,7 @@ class Node:
     def observe(self, record: Record) -> None:
         view = record.view
         self._clock += 1
-        sig = signature(view.history, view.tolerance)
+        sig = view.context
         if record.label is not None:
             label, tol = record.label, view.tolerance
             participants = record.participants()
@@ -239,6 +254,13 @@ class Node:
             for rv in record.reviews:
                 ok = abs(rv.proposal.value - label) <= tol
                 key = (rv.reviewer,) + sig
+                ev = tuple(rv.verdict.evidence)
+                if ev and rv.verdict.endorses is not None:
+                    ev_key = (rv.reviewer,) + ev + sig
+                    if ok:
+                        self.review_tnr_ev.update(ev_key, 1.0 if rv.verdict.endorses else 0.0)
+                    else:
+                        self.review_tpr_ev.update(ev_key, 0.0 if rv.verdict.endorses else 1.0)
                 answered = rv.verdict.endorses is not None
                 self.review_answers.update(key, 1.0 if answered else 0.0)
                 if rv.verdict.counter is not None:

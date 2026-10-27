@@ -4,7 +4,7 @@ This is the detailed version: what every piece believes, how each decision is co
 
 ## 1. Design rules
 
-1. **No node sees the answer or the task family.** Nodes get a `TaskView` (history, tolerance, system pressure). Labels arrive after delivery, for 35% of tasks.
+1. **No node sees the answer or the task family.** Nodes get a `TaskView` (history or question text, tolerance, system pressure, a coarse shared `context`). Labels arrive after delivery, for some tasks only.
 2. **The council has no opinions.** It runs a fixed meeting protocol. Every judgement comes from a node's learned beliefs.
 3. **One objective for everyone.** `U = +1 correct, −1 wrong, 0 abstain, −λ·compute` with λ = 0.02. A node's decisions are judged by their effect on `U`, not on its own score.
 4. **Nobody is certain.** Beliefs are capped at 0.99, so evidence can always move them.
@@ -83,25 +83,31 @@ ask the reviewer with the largest VOI − λ·review_cost, if positive
 
 Confident leads rightly skip review. Uncertain leads buy it when a reviewer has shown it can tell right from wrong in this kind of situation. A 3% curiosity rate keeps reviewer statistics fresh.
 
-A verdict updates the lead's belief by Bayes, using the lead's own learned TPR/TNR for that reviewer. A rejection may carry a **counter-proposal**, which becomes a candidate believed according to that reviewer's dissent record.
+A verdict says how sure the reviewer was (its `evidence`, e.g. `("unsure", "novel")`). It updates the lead's belief by Bayes, using the lead's own TPR/TNR for that reviewer, **keyed first by that evidence**, so a hesitant "no" isn't read with the weight of a confident one. A rejection may carry a **counter-proposal**, which becomes a candidate believed according to that reviewer's dissent record. Reviewers that aren't sure enough to object abstain rather than veto.
 
 If the best candidate is still below the delivery bar, the next bidder with positive merit gets a turn (up to 3 proposals).
 
 ### 3.4 Reconciling conflicts
 
-Two answers further apart than 2× tolerance can't both be right. Answers closer than that are grouped together and the most trusted one speaks for the group. For the remaining mutually exclusive groups with beliefs `p_i`:
+Two answers further apart than 2× tolerance can't both be right. Answers closer than that are grouped together and the most trusted one speaks for the group.
+
+Each surviving belief is already *conditioned on the clash*: a rejected lead was updated by Bayes, and a counter-proposal is believed according to its author's record as a dissenter. So the beliefs are used as they are, and only rescaled if mutually exclusive answers add up to more than 100%:
 
 ```
-P(group i is the right one) = p_i · Π_{j≠i}(1 − p_j) / Z,   Z = Π_j(1 − p_j) + Σ_k p_k Π_{j≠k}(1 − p_j)
+S = Σ_groups p_g ;   p_g ← p_g / S   if S > 1
 ```
 
-Two confident, contradictory answers therefore pull each other down, which sends the council looking for more evidence or into abstention, instead of letting the louder node win.
+(An earlier version multiplied the beliefs as if they were independent opinions, `p_i·Π_{j≠i}(1−p_j)/Z`. That counted the same disagreement twice and let a confidently wrong reviewer crush a correct, novel answer.)
 
 ### 3.5 Delivery and certification
 
 Deliver the top candidate if its reconciled belief is at least `W/(R+W)` (0.5 when calm, higher under pressure). Otherwise abstain.
 
-An unlabeled delivered answer with belief ≥ 0.8 and no rejection is **certified**: broadcast as a teaching signal. Each learner applies its own bar: memory only learns from ≥ 0.95, the noisy-data learner from ≥ 0.8, and the inducer only from its own exact laws.
+An unlabeled delivered answer with belief ≥ 0.8 is **certified** as a teaching signal only if it is a **consensus**: no review rejected it and no rival answer appeared anywhere in the deliberation. Each learner then applies its own bar: memory only learns from ≥ 0.95, the noisy-data learner from ≥ 0.8, and the inducer only from its own exact laws. In maths, the reader never teaches itself from its own answers on ground that was novel to it, and the parser only adopts a peer's answer for a new wording if its own reasoning independently reaches the same answer ("no hearsay").
+
+### 3.5b Asking for help
+
+With a teacher and a budget (`CouncilConfig.help_budget`), the council asks for the true answer when it couldn't settle a question itself: it abstained after trying, or its members proposed answers that can't both be right. It asks *after* answering, so the asked question is scored as answered. The label is then used exactly like a training label, so the next question of that shape benefits. This is self-limiting: once a wording is learned, it stops being contested and stops triggering questions.
 
 ### 3.6 Pressure
 
@@ -123,6 +129,10 @@ Every node sees the full transcript (`Record`). On labeled tasks:
 
 On certified tasks, only `learn()` runs, and only if the learner's own bar is met.
 
+Before any of that, every node may post an **explanation** to `record.notes` via `explain()`. In maths, the parser posts the programs that reproduce the label, and the reader trains on them. That's how symbolic discoveries become neural skill.
+
+When the council is answering rather than learning (`ask`/`chat`), nodes set `explore = False` and bid their calibrated beliefs instead of Thompson samples, so the same question gets the same answer.
+
 ## 5. Health lifecycle
 
 ```
@@ -141,7 +151,7 @@ healthy ────────────────────────
 - On a confirmed fault the node **humbles** its self-model (shrinks all counts to 15%) and **announces** it was degraded. Every peer then drops its trust history for that node and **retracts** lessons learned from that node's certified answers in the last 120 tasks (Recall and Intuition keep provenance for this).
 - **Audits.** A peer that sees confident failures (2 within a short window, or 1 shocking one, or 1 it had explicitly rejected in review) files an audit request, and the council relays it.
 
-## 6. The nodes
+## 6. The sequence nodes
 
 ### Intuition (`nodes/intuition.py`): neural
 - 5 independent 2×32 tanh MLPs, vectorised, Adam with a Huber loss, trained on a replay buffer with per-member bootstrap.
@@ -167,15 +177,65 @@ healthy ────────────────────────
 - Constraints: keeps-direction, keeps-curvature, bounded-step, constant-growth-ratio, stays-in-envelope.
 - Learns P(reality satisfies the constraint | it applies, situation) from every label. It only vetoes using constraints at ≥ 90% reliability, so constraints that turn out to be folklore in some situation stop being used there.
 
-## 7. Baselines and ablations (`experiment.py`)
+## 7. The maths world (`synod/maths/`)
+
+### 7.1 What the symbolic side knows and doesn't
+
+`mathlang.read()` turns a question into typed **slots** (numbers N, lists L, equations Q, function definitions F, calls C, expressions X) and a **skeleton** (the wording with notation replaced by placeholders):
+
+```
+"Suppose 4*k - 6 = 10. What is the remainder when k is divided by 3?"
+  slots     N1Q1   (the number 3; the equation 4k − 16 = 0)
+  skeleton  suppose <eq> what is the remainder when <var> is divided by #
+```
+
+It can parse polynomials in one variable exactly (rational coefficients, implicit multiplication, powers) and tell the variable `x` from the word "a". That's all the built-in knowledge: notation, not language.
+
+### 7.2 Programs and search
+
+A program is a nested tuple over slots, e.g. `("mod", ("solve", ("Q", 0)), ("N", 0))`. There are 26 primitives: arithmetic, mod, gcd, lcm, powers, comparisons, primality, square and sqrt; list mean, median, total, max, min and next term (reusing the sequence inducer); and `calc`, `solve`, `apply`, `at`, `slope` for notation. Unit facts are constants K ∈ {2, 3, 4, 5, 7, 10, 12, 24, 60, 100, 1000}.
+
+`explain(reading, answer)` enumerates depth-1 programs, and depth-2 compositions if no simple program uses every slot, keeping those that reproduce the answer (≈3 ms per question).
+
+### 7.3 Parser: three ways to answer
+
+1. **Known wording.** A version space per skeleton, `program → [hits, misses]`, updated on every labeled example. The best program is the one consistent with the most examples.
+2. **Analogy.** For an unfamiliar wording, take the most similar known wordings with the same slots (IDF-weighted Jaccard), their programs, and every program **one edit away** (swap an operation for a sibling, flip argument order, change a constant).
+3. **Composition.** If no analogy scores well, enumerate fresh programs that use every slot.
+
+All candidates are scored by learned word meanings:
+
+```
+assoc(w, p) = P(p | w) · PMI(w, p)            (plain PMI over-rates rare primitives)
+score(prog) = Σ assigned assoc  − 1 per primitive  − 0.7 · Σ strong words left unexplained
+```
+
+Each word may justify at most one primitive (explaining away). A word whose favourite primitive is already in the program counts as explained (synonyms). Analogies get a bonus of 2 × similarity, edits pay 0.75. The evidence the parser bids on is `(mode, closeness, margin)`, calibrated separately for each.
+
+### 7.4 Reader, estimator, checker
+
+- **Reader:** 3 sparse MLPs (hashed unigrams and bigrams of the skeleton → softmax over discovered programs), trained on the parser's explanations. Its evidence is `(novel/familiar, agree/split, confidence)`. *Novel* means the combination of words its networks rely on (large learned input weights) has never been seen, so a new name in a word problem doesn't count but a new pairing of operation words does.
+- **Estimator:** predicts `sign·log10(1+|answer|)` from the wording and numeric features. Rejects answers outside ~2.5 learned standard deviations; abstains on unfamiliar wording.
+- **Checker:** satisfies-the-equation, whole-number, yes-or-no and inside-the-list checks, with reliability learned per check, context and wording. It vetoes only at ≥ 97%.
+
+### 7.5 Curriculum and tests
+
+36 training question types (arithmetic in words and symbols, mod, gcd, lcm, primes, powers, roots, linear equations, function evaluation, derivatives, sequences, list statistics, comparisons, unit conversion, word problems, two-step compositions). Each has training phrasings and held-out phrasings. Word problems use held-out names and objects at test time. Compositions at test time are 4 more types, combinations never seen in training.
+
+## 8. Baselines and ablations
+
+Sequences (`experiment.py`):
 
 - `neural-only`, `symbolic-only`: one node does everything (same node code, same learning, same self-healing).
 - `hand-written gate`: integer-valued → inducer, else → intuition. That's the "programmatic gate".
 - `synod w/o review | trust | exchange | self-healing`: switch one mechanism off.
 
-## 8. Known limitations and next steps
+Maths (`maths/experiment.py`): `parser alone`, `reader alone` (still trained on the parser's explanations, since it can't discover programs itself), a `hand-written gate` (parser if it knows the wording, else reader), and Synod with and without a teacher.
 
-- **Bidding overhead.** A market costs compute: Synod uses about 2.4 units per task against the gate's 1.1. Open-outcry and learned self-restraint cut this a lot. A learned "who usually wins here" prior could cut it further.
-- **Echo risk in certification.** Learners only train on certified answers under their own bars, calibration only learns from real labels, and retraction cleans up after a confirmed fault. A node that's wrong in a way nobody can check is still only caught by labels.
-- **Synthetic world.** The task domain is small and numeric. The protocol is domain-agnostic; nodes and `TaskView` are where a real domain plugs in.
-- **Next:** an LLM node and a solver node on a real task, node spawning and retirement driven by marginal contribution, partial-credit composition (one node's output as another's input), and learned (not hand-picked) situation signatures.
+## 9. Known limitations and next steps
+
+- **Self-knowledge doesn't transfer to harder novelty.** On never-seen maths compositions, the reader is confidently wrong. Its "novel ground" record comes from training-time novelty, which was easier. Without feedback the council can't know it's in a harder regime: alone, the parser is right 51% and never wrong there, while the council is right 10% and wrong 39%. A teacher on call fixes most of it (87%). Better unsupervised novelty and calibration is the next frontier.
+- **Bidding overhead.** A market costs compute (sequences: 2.5 units per task vs the gate's 1.1).
+- **Echo risk in self-training.** Mitigated by consensus-only certification, per-learner bars, no-hearsay corroboration, no self-teaching on novel ground, and retraction after a confirmed fault, but not eliminated.
+- **Synthetic worlds.** Both domains are generated. The protocol is domain-agnostic; nodes, `TaskView` and the answer check are where a real domain plugs in.
+- **Next:** an LLM as a neural reader and a real CAS/SMT solver as a symbolic node; the teacher replaced by a stronger model or a human; node spawning and retirement driven by marginal contribution; learned (not hand-picked) situation signatures.

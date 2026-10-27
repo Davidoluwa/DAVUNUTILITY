@@ -14,7 +14,7 @@ class ReconcileTest(unittest.TestCase):
     def test_conflicting_answers_cast_doubt_on_each_other(self):
         a, b = cand(10.0, 0.9), cand(20.0, 0.9)
         post = Council.reconcile([a, b], tolerance=0.5)
-        self.assertAlmostEqual(post[id(a)], 0.09 / 0.19, places=6)
+        self.assertAlmostEqual(post[id(a)], 0.5, places=6)
         self.assertAlmostEqual(post[id(a)], post[id(b)])
 
     def test_compatible_answers_do_not_conflict(self):
@@ -25,7 +25,13 @@ class ReconcileTest(unittest.TestCase):
     def test_track_record_breaks_ties(self):
         a, b = cand(10.0, 0.95), cand(20.0, 0.3)
         post = Council.reconcile([a, b], tolerance=0.5)
-        self.assertGreater(post[id(a)], 0.9)
+        self.assertGreater(post[id(a)], 0.7)
+        self.assertGreater(post[id(a)], post[id(b)])
+
+    def test_beliefs_that_fit_together_are_left_alone(self):
+        a, b = cand(10.0, 0.6), cand(20.0, 0.2)
+        post = Council.reconcile([a, b], tolerance=0.5)
+        self.assertAlmostEqual(post[id(a)], 0.6)
 
 
 class WorldTest(unittest.TestCase):

@@ -29,7 +29,6 @@ import numpy as np
 
 from ..beliefs import Competence, conf_bucket, erf_conf
 from ..node import Node
-from ..perception import signature
 from ..protocol import SYMBOLIC, Proposal, Verdict
 
 
@@ -191,7 +190,7 @@ class InducerNode(Node):
         sc = self.scratch(view)
         if "h" not in sc:
             sc.update(h=np.asarray(view.history, dtype=float), tried=set(), exact=None, approx=[],
-                      spent=0.0, order=self.search_order(signature(view.history, view.tolerance)))
+                      spent=0.0, order=self.search_order(view.context))
         return sc
 
     def _try_concepts(self, sc):
@@ -236,7 +235,7 @@ class InducerNode(Node):
         sc = self._state(view)
         before = sc["spent"]
         self._try_concepts(sc)
-        sig = signature(view.history, view.tolerance)
+        sig = view.context
         if sc["exact"] is None and self._mode(sc, sig) == "approx":
             # Exact laws don't live here: look at how well my favourite
             # approximate laws fit *this* input and bid on that.
@@ -260,7 +259,7 @@ class InducerNode(Node):
         return sc["mode"]
 
     def _conclude(self, view, sc) -> Proposal:
-        sig = signature(view.history, view.tolerance)
+        sig = view.context
         if sc["exact"] is not None:
             f = sc["exact"]
             evidence = ("exact", f.template.name)
@@ -284,7 +283,7 @@ class InducerNode(Node):
     def solve(self, view) -> Proposal:
         sc = self._state(view)
         before = sc["spent"]
-        sig = signature(view.history, view.tolerance)
+        sig = view.context
         self._try_concepts(sc)
         if sc["exact"] is None and self._mode(sc, sig) == "approx":
             self._search(sc, max(0, self.approx_templates - len(sc["tried"])))
@@ -325,13 +324,13 @@ class InducerNode(Node):
         correct = abs(f.prediction + self.bias - value) <= view.tolerance
         if not f.exact:
             if source == "label" and correct:
-                self.approx_counts[signature(view.history, view.tolerance)][f.template.name] += 1
+                self.approx_counts[view.context][f.template.name] += 1
             return
         if source == "certified" and (record.final is None or record.final.node != self.name):
             return
         weight = 1.0 if source == "label" else 0.5
         if correct:
-            sig = signature(view.history, view.tolerance)
+            sig = view.context
             self.law_counts[sig][f.template.name] += weight
             self.law_counts[None][f.template.name] += weight
             if f.template.n_params:

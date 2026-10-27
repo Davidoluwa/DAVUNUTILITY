@@ -22,6 +22,9 @@ class TaskView:
     # Shared "system stress" signal in [0, 1]. Rises when the whole system has
     # been making mistakes lately; every node folds it into its own decisions.
     pressure: float = 0.0
+    question: str = ""  # natural-language tasks (e.g. maths questions)
+    # Coarse, shared perception of the task's shape. Self-models condition on it.
+    context: tuple = ()
 
 
 @dataclass(frozen=True)
@@ -29,15 +32,18 @@ class Task:
     id: int
     history: Tuple[float, ...]
     tolerance: float
-    target: float
+    target: Optional[float]
     family: str
     labeled: bool
+    question: str = ""
+    context: tuple = ()
+    split: str = ""
 
     def view(self, pressure: float = 0.0) -> TaskView:
-        return TaskView(self.id, self.history, self.tolerance, pressure)
+        return TaskView(self.id, self.history, self.tolerance, pressure, self.question, self.context)
 
     def is_correct(self, value: float) -> bool:
-        return abs(value - self.target) <= self.tolerance
+        return self.target is not None and abs(value - self.target) <= self.tolerance
 
 
 @dataclass
@@ -59,6 +65,7 @@ class Proposal:
     cost: float
     rationale: str
     evidence: tuple = ()
+    program: object = None  # the explicit law/program behind the answer, if any
 
 
 @dataclass
@@ -69,6 +76,7 @@ class Verdict:
     cost: float
     rationale: str
     counter: Optional[Proposal] = None
+    evidence: tuple = ()  # how sure the reviewer was; its track record is kept per level
 
 
 @dataclass
@@ -97,6 +105,7 @@ class Record:
     cost: float = 0.0
     label: Optional[float] = None  # ground truth, only for labeled tasks
     certified: Optional[float] = None  # pseudo-label the council vouches for
+    notes: dict = field(default_factory=dict)  # explanations nodes share at settlement
 
     @property
     def delivered(self) -> bool:

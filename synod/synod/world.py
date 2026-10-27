@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from .perception import signature
 from .protocol import Task
 
 LENGTH = 8
@@ -149,7 +150,8 @@ class World:
             seq, tol = out
             history, target = tuple(float(v) for v in seq[:LENGTH]), float(seq[LENGTH])
         labeled = bool(self.rng.random() < self.scenario.label_rate)
-        return Task(task_id, history, float(tol), target, family, labeled)
+        return Task(task_id, history, float(tol), target, family, labeled,
+                    context=signature(history, float(tol)))
 
     def stream(self):
         for t in range(self.scenario.n_tasks):

@@ -27,7 +27,6 @@ import numpy as np
 
 from .node import Decline
 from .objective import Objective
-from .perception import signature
 from .protocol import Record, Review, Task
 
 
@@ -42,6 +41,7 @@ class CouncilConfig:
     certify_at: float = 0.8  # learners apply their own, stricter bars on top
     pressure_window: int = 40
     max_belief: float = 0.99  # nobody gets to be certain
+    help_budget: int = 0  # how many times the council may ask a teacher for an answer
 
 
 class Council:
@@ -54,6 +54,9 @@ class Council:
             n.flags = {"healing": self.config.healing, "review": self.config.reviews}
         self._recent_errors: deque = deque(maxlen=self.config.pressure_window)
         self._normal_error = None  # long-run error rate: what "normal" looks like
+        self.teacher = None  # callable(task) -> answer, consulted only within help_budget
+        self.help_used = 0
+        self.asked: list = []
 
     # -- shared signals -------------------------------------------------
     def pressure(self) -> float:
@@ -77,10 +80,12 @@ class Council:
         """Beliefs after accounting for conflicts.
 
         Candidates within 2x tolerance of each other could both be right, so they
-        count as one answer (the most trusted speaks for it); answers further
-        apart are mutually exclusive, so
-        P(answer i) = p_i * prod_{j!=i}(1 - p_j) / Z, where Z also counts
-        "none of them is right"."""
+        count as one answer (the most trusted speaks for it). Answers further
+        apart are mutually exclusive, and each belief is already conditioned on
+        the clash (a rejected lead was updated by Bayes; a counter-proposal is
+        believed per its author's record as a dissenter). So they're kept as they
+        are unless they add up to more than certainty, in which case they're
+        rescaled: exclusive answers can't jointly be more than 100% likely."""
         clusters = []
         for c in cands:
             for cl in clusters:
@@ -90,23 +95,15 @@ class Council:
                     break
             else:
                 clusters.append({"value": c["prop"].value, "p": c["belief"], "members": [c]})
-        if len(clusters) == 1:
-            return {id(c): c["belief"] for c in cands}
-        ps = np.clip([cl["p"] for cl in clusters], 1e-6, 1 - 1e-6)
-        none = float(np.prod(1 - ps))
-        joint = [p * none / (1 - p) for p in ps]
-        z = none + sum(joint)
-        out = {}
-        for cl, j in zip(clusters, joint):
-            for c in cl["members"]:
-                out[id(c)] = j / z
-        return out
+        total = sum(cl["p"] for cl in clusters)
+        scale = 1.0 / total if total > 1.0 else 1.0
+        return {id(c): cl["p"] * scale for cl in clusters for c in cl["members"]}
 
     # -- one deliberation ------------------------------------------------
     def handle(self, task: Task) -> Record:
         obj = self.objective
         view = task.view(self.pressure())
-        sig = signature(view.history, view.tolerance)
+        sig = view.context
         rec = Record(view)
 
         # Open outcry: cheapest lookers speak first, later ones see the table.
@@ -161,13 +158,33 @@ class Council:
 
         if task.labeled:
             rec.label = task.target
+        elif self._wants_help(rec):
+            # The answer (or abstention) above already stands; asking afterwards
+            # is for learning, so the next question of this shape goes better.
+            rec.label = self.teacher(task)
+            self.help_used += 1
+            self.asked.append(task.id)
         elif self.config.exchange and rec.final is not None and rec.final_belief >= self.config.certify_at:
+            # Only teach from consensus: no rejection of the answer, and no rival
+            # answer anywhere in the deliberation.
             rejected = any(r.proposal is rec.final and r.verdict.endorses is False for r in rec.reviews)
-            if not rejected:
+            contested = any(abs(p.value - rec.final.value) > 2 * view.tolerance for p in rec.all_proposals()
+                            if p.value == p.value)
+            if not rejected and not contested:
                 rec.certified = rec.final.value
 
         self._settle(task, rec)
         return rec
+
+    def _wants_help(self, rec) -> bool:
+        """Ask only when we couldn't settle it ourselves: we abstained after
+        trying, or our members genuinely disagree."""
+        if self.teacher is None or self.help_used >= self.config.help_budget or not rec.proposals:
+            return False
+        tol = rec.view.tolerance
+        values = [p.value for p in rec.all_proposals() if p.value == p.value]
+        contested = any(abs(a - b) > 2 * tol for a in values for b in values)
+        return rec.final is None or contested
 
     def _review(self, lead, view, sig, entry, rec, cands) -> None:
         prop = entry["prop"]
@@ -188,7 +205,7 @@ class Council:
             verdict = self.by_name[choice].critique(view, prop)
             rec.cost += verdict.cost
             if verdict.endorses is not None:
-                entry["belief"] = lead.update_belief(entry["belief"], choice, verdict.endorses, sig)
+                entry["belief"] = lead.update_belief(entry["belief"], choice, verdict.endorses, sig, verdict.evidence)
             if verdict.counter is not None:
                 # A rival answer, believed according to this reviewer's record as a dissenter.
                 cands.append({"prop": verdict.counter, "belief": lead.dissent_belief(verdict.counter, sig)})
@@ -196,6 +213,10 @@ class Council:
             rec.reviews.append(Review(choice, prop, verdict, verdict.cost, before, after))
 
     def _settle(self, task: Task, rec: Record) -> None:
+        for node in self.nodes:
+            note = node.explain(rec)
+            if note is not None:
+                rec.notes[node.name] = note
         for node in self.nodes:
             node.observe(rec)
         accused = {}
@@ -245,6 +266,10 @@ class FixedPipeline:
                 rec.final, rec.final_belief = prop, prop.confidence
         if task.labeled:
             rec.label = task.target
+        for n in self.nodes:
+            note = n.explain(rec)
+            if note is not None:
+                rec.notes[n.name] = note
         for n in self.nodes:
             n.observe(rec)
             n.announcement = None
