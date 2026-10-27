@@ -4,6 +4,7 @@
   python -m synod.maths ask "What is the gcd of 84 and 126?"
   python -m synod.maths chat                              ask questions interactively
   python -m synod.maths report [--seeds N]                compare strategies, write results/MATHS_REPORT.md
+  python -m synod.maths exam [--seed S]                   40 hand-written questions -> results/EXAM_REPORT.md
 """
 from __future__ import annotations
 
@@ -72,6 +73,9 @@ def main(argv=None):
     sub.add_parser("chat")
     rp = sub.add_parser("report")
     rp.add_argument("--seeds", type=int, default=3)
+    ex = sub.add_parser("exam")
+    ex.add_argument("--seed", type=int, default=0)
+    ex.add_argument("--no-compare", action="store_true", help="skip the single-node and gate baselines")
     args = ap.parse_args(argv)
 
     if args.cmd == "train":
@@ -79,6 +83,9 @@ def main(argv=None):
     elif args.cmd == "ask":
         council = load()
         print(ask(council, " ".join(args.question))[1])
+    elif args.cmd == "exam":
+        from .exam import main as exam_main
+        exam_main(args.seed, compare=not args.no_compare)
     elif args.cmd == "chat":
         council = load()
         print("ask me a maths question (empty line to quit)")

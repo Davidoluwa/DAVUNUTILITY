@@ -22,8 +22,9 @@ python -m synod.maths train                 # learn maths (~1 min), test it, sav
 python -m synod.maths ask "Suppose 2*n + 6 = 20. What is n times 8?"
 python -m synod.maths chat                  # ask questions interactively
 python -m synod.maths report --seeds 3      # compare strategies -> results/MATHS_REPORT.md
+python -m synod.maths exam                  # 40 hand-written questions -> results/EXAM_REPORT.md
 python -m synod --seeds 5                   # the sequence world -> results/REPORT.md
-python -m unittest discover -s tests -t .   # 35 tests
+python -m unittest discover -s tests -t .   # 36 tests
 ```
 
 ---
@@ -140,6 +141,19 @@ What this shows:
 - **When it's stuck, it asks, and one answer generalises.** Letting the council ask a teacher about questions it couldn't settle (only ~3% of the test, chosen by the council itself) takes new combinations from 10% to **87%** and word problems from 63% to **96%**. It asks *after* answering, so it learns for next time, and it stops asking once a wording is learned.
 - **The frontier (honest finding).** Without a teacher, on genuinely new combinations, the council does *worse* than its own Parser alone (10% vs 51%, and 39% wrong vs 0%). The Reader is confidently wrong there, and its self-assessment comes from training-time novelty, which was easier. Self-knowledge earned on familiar ground doesn't transfer to a harder regime without feedback. That's the most interesting thing to crack next.
 
+### A 40-question exam
+
+40 hand-written questions on curriculum topics, none taken from the generator: new numbers throughout, 18 in wordings never seen in training, some with numbers outside the training ranges. The council was trained on the curriculum only, then frozen for the exam (`results/EXAM_REPORT.md`).
+
+| | right | wrong | abstained |
+|---|---|---|---|
+| **Synod** | **34/40** | 4 | 2 |
+| parser alone | 31 | 2 | 7 |
+| reader alone | 34 | 4 | 2 |
+| hand-written gate | 34 | 5 | 1 |
+
+Synod got every familiar wording right (22/22) and 12/18 new wordings. Retrained with other seeds it scores 32 and 33. All 4 wrong answers came from the neural reader, each already stamped with its own "never seen this combination" flag; three were the never-seen two-step questions. The system knows which answers are risky but doesn't yet act on it, so that's the next lever.
+
 ### Asking it questions it was never trained on
 
 ```text
@@ -218,7 +232,7 @@ synod/
       world.py       the maths curriculum and its held-out test sets
       experiment.py, report.py, __main__.py  train / ask / chat / report
     transcript.py    renders a deliberation as text
-  tests/             35 tests (unittest)
+  tests/             36 tests (unittest)
   docs/ARCHITECTURE.md   the mechanics and the maths behind them
   results/           REPORT.md (sequences), MATHS_REPORT.md (maths)
 ```

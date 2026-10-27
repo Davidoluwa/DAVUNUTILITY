@@ -96,3 +96,26 @@ class EndToEndTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ExamKeyTest(unittest.TestCase):
+    def test_answer_key_is_right_and_unseen(self):
+        """Recompute every exam answer with plain Python, independent of Synod."""
+        import math
+        from statistics import mean, median
+
+        from synod.maths.exam import EXAM, leaked
+
+        def isprime(n):
+            return n > 1 and all(n % d for d in range(2, int(n ** 0.5) + 1))
+
+        key = [348 + 279, 900 - 456, 64 * 25, 144 / 12, 12 * (7 + 8) - 30, 523 % 9, 250 % 7, math.gcd(252, 198),
+               math.gcd(91, 65), 45, int(isprime(391)), int(isprime(211)), 3 ** 7, 45 ** 2, math.isqrt(2209),
+               (23 + 12) / 7, (-7 - 9) / (4 - 2), -15 / 3, 3 * 9 - 2 * 3 + 4, 2 * 8 - 2, 3 * 16 - 10 * 4 + 2,
+               12 * (-2) + 3, 41, 192, 13, mean([12, 18, 25, 33, 37]), median([7, 3, 19, 11, 5]),
+               max([14, -3, 27, 8, 19]), max(-12, -15), int(45 > 54), 2.5 * 60, 7 * 100, 63 / 7, 23 + 15, 48 / 6,
+               7 * 9, (22 + 3) / 5 + 10, (14 / 2) * 3, (2 * 3 + 5) + 4, 12 - 5]
+        self.assertEqual(len(EXAM), 40)
+        for (_, _, q, a), k in zip(EXAM, key):
+            self.assertAlmostEqual(a, k, msg=q)
+        self.assertEqual(leaked(0), [])

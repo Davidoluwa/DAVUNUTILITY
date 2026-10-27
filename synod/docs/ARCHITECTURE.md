@@ -222,6 +222,10 @@ Each word may justify at most one primitive (explaining away). A word whose favo
 
 36 training question types (arithmetic in words and symbols, mod, gcd, lcm, primes, powers, roots, linear equations, function evaluation, derivatives, sequences, list statistics, comparisons, unit conversion, word problems, two-step compositions). Each has training phrasings and held-out phrasings. Word problems use held-out names and objects at test time. Compositions at test time are 4 more types, combinations never seen in training.
 
+### 7.6 The exam
+
+`maths/exam.py` holds 40 hand-written questions with an answer key checked by an independent unit test, plus a check that none appear word for word in training. The council is trained on the curriculum only and frozen (no certified-answer learning, no exploration, no teacher). Each question goes to a fresh copy, so order can't matter.
+
 ## 8. Baselines and ablations
 
 Sequences (`experiment.py`):
