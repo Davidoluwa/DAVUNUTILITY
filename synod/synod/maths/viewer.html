@@ -1,0 +1,486 @@
+<title>Synod Deliberations</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Atkinson+Hyperlegible:wght@400;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: one reading column; a member strip, a 40-tile exam sheet, then the case file for the chosen question in five stages. */
+:root {
+  --bg: #f4f5f7;
+  --surface: #ffffff;
+  --sunk: #eceef2;
+  --ink: #161a21;
+  --muted: #5d6573;
+  --line: #d9dde4;
+  --parser: #2f55c9;
+  --checker: #0b7f78;
+  --reader: #b46a07;
+  --estimator: #b03c74;
+  --right: #23824f;
+  --wrong: #c43d33;
+  --abstain: #7c8491;
+  --font-display: "Bricolage Grotesque", "Avenir Next", "Segoe UI", sans-serif;
+  --font-body: "Atkinson Hyperlegible", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --radius: 10px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1216; --surface: #171b21; --sunk: #1f242c; --ink: #e7eaf0; --muted: #9aa3b2; --line: #2b313b;
+    --parser: #7f9dff; --checker: #3fc3b8; --reader: #f0a63a; --estimator: #f07ab0;
+    --right: #4cc283; --wrong: #f2766b; --abstain: #8d96a5; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1216; --surface: #171b21; --sunk: #1f242c; --ink: #e7eaf0; --muted: #9aa3b2; --line: #2b313b;
+  --parser: #7f9dff; --checker: #3fc3b8; --reader: #f0a63a; --estimator: #f07ab0;
+  --right: #4cc283; --wrong: #f2766b; --abstain: #8d96a5; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 15px; line-height: 1.5;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 20px 48px;
+}
+.wrap { max-width: 860px; margin: 0 auto; display: grid; gap: 28px; }
+h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; margin: 0; letter-spacing: -0.01em; }
+h1 { font-size: clamp(28px, 6vw, 40px); font-weight: 700; line-height: 1.05; }
+h2 { font-size: 20px; font-weight: 700; }
+h3 { font-size: 16px; font-weight: 700; }
+p { margin: 0; }
+.muted { color: var(--muted); }
+.mono { font-family: var(--font-mono); font-size: 13px; }
+.eyebrow { font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); font-weight: 700; }
+header { display: grid; gap: 10px; }
+.scoreline { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; font-size: 13px; font-weight: 700;
+  background: var(--sunk); color: var(--ink); white-space: nowrap; }
+.pill.right { background: color-mix(in srgb, var(--right) 16%, transparent); color: var(--right); }
+.pill.wrong { background: color-mix(in srgb, var(--wrong) 16%, transparent); color: var(--wrong); }
+.pill.abstain { background: color-mix(in srgb, var(--abstain) 18%, transparent); color: var(--abstain); }
+
+/* members */
+.members { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; }
+.member { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; display: grid; gap: 4px; min-width: 0; }
+.member .name { display: flex; align-items: center; gap: 8px; font-weight: 700; font-family: var(--font-display); font-size: 16px; }
+.glyph { width: 11px; height: 11px; flex: none; display: inline-block; background: var(--c); }
+.glyph.neural { border-radius: 50%; }
+.glyph.symbolic { border-radius: 2px; }
+.kind { font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); font-weight: 700; }
+
+/* participation table */
+.tablebox { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
+table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; font-size: 14px; }
+th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th { font-size: 12px; color: var(--muted); font-weight: 700; }
+tr:last-child td { border-bottom: 0; }
+td.num { text-align: right; }
+
+/* exam sheet */
+.filters { display: flex; flex-wrap: wrap; gap: 6px; }
+.filters button, .nav button {
+  font: inherit; font-size: 13px; font-weight: 700; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--line);
+  background: var(--surface); color: var(--ink); cursor: pointer;
+}
+.filters button[aria-pressed="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.sheet { display: grid; grid-template-columns: repeat(auto-fill, minmax(38px, 1fr)); gap: 6px; }
+.tile {
+  font: inherit; font-weight: 700; font-variant-numeric: tabular-nums; height: 38px; border-radius: 8px; cursor: pointer;
+  border: 2px solid transparent; background: var(--surface); color: var(--ink); position: relative;
+  box-shadow: inset 0 -4px 0 var(--s);
+}
+.tile[data-v="right"] { --s: var(--right); }
+.tile[data-v="wrong"] { --s: var(--wrong); }
+.tile[data-v="abstain"] { --s: var(--abstain); }
+.tile[aria-current="true"] { border-color: var(--ink); }
+.tile.dim { opacity: 0.28; }
+.tile .knew { position: absolute; top: 3px; right: 4px; width: 6px; height: 6px; border-radius: 50%; background: var(--parser); }
+button:focus-visible { outline: 3px solid var(--parser); outline-offset: 2px; }
+.legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 13px; color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.sw { width: 12px; height: 4px; border-radius: 2px; background: var(--c); display: inline-block; }
+
+/* case file */
+.case { display: grid; gap: 18px; }
+.qcard { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; display: grid; gap: 10px; }
+.qtext { font-family: var(--font-display); font-size: clamp(19px, 4.4vw, 24px); font-weight: 500; line-height: 1.25; text-wrap: balance; }
+.story { padding: 12px 14px; border-radius: var(--radius); background: var(--sunk); font-size: 15px; }
+.stage { display: grid; gap: 10px; }
+.stage > .head { display: flex; align-items: baseline; gap: 10px; }
+.stage .n { font-family: var(--font-mono); font-size: 13px; color: var(--muted); }
+.tokens { display: flex; flex-wrap: wrap; gap: 4px; }
+.tok { font-family: var(--font-mono); font-size: 13px; padding: 2px 6px; border-radius: 5px; background: var(--sunk); }
+.tok.ph { background: color-mix(in srgb, var(--parser) 16%, transparent); color: var(--parser); font-weight: 600; }
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; font-size: 14px; }
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; font-family: var(--font-mono); font-size: 13px; min-width: 0; overflow-wrap: anywhere; }
+
+.inner { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; }
+.icard { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; display: grid; gap: 8px; align-content: start; min-width: 0;
+  box-shadow: inset 3px 0 0 var(--c); }
+.icard .top { display: flex; align-items: center; gap: 8px; justify-content: space-between; flex-wrap: wrap; }
+.icard .who { display: flex; align-items: center; gap: 8px; font-weight: 700; }
+.claim { display: grid; gap: 2px; }
+.claim .big { font-family: var(--font-mono); font-weight: 600; font-size: 15px; overflow-wrap: anywhere; }
+.mini { font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+.rows { display: grid; gap: 6px; }
+.row { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; font-size: 13px; min-width: 0; }
+.row .label { font-family: var(--font-mono); font-size: 12px; overflow-wrap: anywhere; min-width: 0; }
+.bar { height: 6px; border-radius: 3px; background: var(--sunk); position: relative; overflow: hidden; grid-column: 1 / -1; }
+.bar > i { position: absolute; inset: 0 auto 0 0; background: var(--c, var(--ink)); border-radius: 3px; }
+.mark { font-weight: 700; font-size: 12px; }
+.mark.ok { color: var(--right); }
+.mark.no { color: var(--wrong); }
+.chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.chip { font-size: 12px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+.chip.warn { border-color: color-mix(in srgb, var(--reader) 60%, transparent); color: var(--reader); }
+
+.timeline { display: grid; gap: 8px; }
+.turn { display: grid; grid-template-columns: 22px 1fr; gap: 10px; align-items: start; }
+.turn .dot { margin-top: 5px; }
+.turn .body { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 12px; display: grid; gap: 6px; min-width: 0; }
+.turn.quiet .body { background: transparent; border-style: dashed; }
+.turn .line1 { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: baseline; }
+.turn .line1 b { font-weight: 700; }
+.verdict { font-size: 12px; font-weight: 700; padding: 1px 8px; border-radius: 999px; }
+.verdict.endorse { color: var(--right); background: color-mix(in srgb, var(--right) 14%, transparent); }
+.verdict.reject { color: var(--wrong); background: color-mix(in srgb, var(--wrong) 14%, transparent); }
+.verdict.abstain { color: var(--abstain); background: color-mix(in srgb, var(--abstain) 16%, transparent); }
+
+/* belief meter with the delivery line */
+.meter { position: relative; height: 10px; border-radius: 5px; background: var(--sunk); }
+.meter .fill { position: absolute; inset: 0 auto 0 0; border-radius: 5px; background: var(--c, var(--ink)); opacity: 0.9; }
+.meter .ghost { position: absolute; inset: 0 auto 0 0; border-radius: 5px; background: var(--c, var(--ink)); opacity: 0.25; }
+.meter .line { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--ink); opacity: 0.55; }
+.meterlabel { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+.verdictbox { display: grid; gap: 10px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; }
+.outcome { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 14px; }
+.outcome .ans { font-family: var(--font-mono); font-size: 22px; font-weight: 600; }
+.nav { display: flex; gap: 8px; justify-content: space-between; }
+details { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 14px; }
+details summary { cursor: pointer; font-weight: 700; }
+details p { margin-top: 8px; color: var(--muted); }
+@media (prefers-reduced-motion: no-preference) {
+  .fill, .bar > i { transition: width 300ms ease; }
+}
+</style>
+
+<div class="wrap">
+  <header>
+    <span class="eyebrow">Synod · inside the council</span>
+    <h1>How the council took the 40-question exam</h1>
+    <p class="muted">Each question goes to four members. Two are symbolic (squares) and two are neural (circles). Pick a question to see how it was read, what each member privately worked out, who spoke up, who checked whom, and how the final call was made. The council was trained on the curriculum only and frozen for the exam.</p>
+    <div class="scoreline" id="score"></div>
+  </header>
+
+  <section class="stage">
+    <h2>The members</h2>
+    <div class="members" id="members"></div>
+  </section>
+
+  <section class="stage">
+    <h2>Who did what across the exam</h2>
+    <div class="tablebox"><table id="participation"></table></div>
+    <p class="mini">"Had it privately" counts questions where the member's own working gave the right answer, whether or not it said so.</p>
+  </section>
+
+  <section class="stage">
+    <h2>The exam sheet</h2>
+    <div class="filters" id="filters" role="group" aria-label="Filter questions"></div>
+    <div class="sheet" id="sheet"></div>
+    <div class="legend">
+      <span><i class="sw" style="--c: var(--right)"></i>right</span>
+      <span><i class="sw" style="--c: var(--wrong)"></i>wrong</span>
+      <span><i class="sw" style="--c: var(--abstain)"></i>abstained</span>
+      <span><i class="glyph neural" style="--c: var(--parser); width:7px; height:7px"></i>a member had the right answer but it wasn't delivered</span>
+    </div>
+  </section>
+
+  <section class="case" id="case" aria-live="polite"></section>
+
+  <details>
+    <summary>How to read the numbers</summary>
+    <p><b>Calibrated confidence</b> is a member's own estimate, learned from its track record in similar situations. <b>The council's reading</b> is the same claim as the other members see it, after their trust in that member. <b>Belief</b> is the council's current probability that an answer is right. It moves with every review, and an answer is only delivered if its belief clears the line on the meter (0.5 here: a wrong answer costs as much as a right one earns). Rival answers can't both be right, so their beliefs are weighed against each other at the end.</p>
+  </details>
+</div>
+
+<script id="data" type="application/json">__DATA__</script>
+<script>
+(() => {
+  const DATA = JSON.parse(document.getElementById("data").textContent);
+  const CASES = DATA.cases;
+  const K = DATA.knowledge || {};
+  const NODES = {
+    parser: { label: "Parser", kind: "symbolic", color: "var(--parser)",
+      role: "Reads notation and does exact maths. Learned what wordings mean from answers, and reasons by analogy." },
+    checker: { label: "Checker", kind: "symbolic", color: "var(--checker)",
+      role: "Back-substitution and answer-shape checks, each trusted only as far as its track record." },
+    reader: { label: "Reader", kind: "neural", color: "var(--reader)",
+      role: "Three small networks that learned wording → program from what the Parser discovered." },
+    estimator: { label: "Estimator", kind: "neural", color: "var(--estimator)",
+      role: "Number sense: guesses the rough size of an answer and objects to the wrong ballpark." },
+  };
+  const ORDER = ["parser", "reader", "estimator", "checker"];
+  const MODES = { known: "Known wording", analogy: "Analogy with a known wording", "analogy-edit": "Analogy, plus one change",
+    lexical: "Composed from word meanings", none: "No idea" };
+
+  const $ = (sel) => document.querySelector(sel);
+  const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const num = (v) => (v === null || v === undefined) ? "—" : (Math.abs(v - Math.round(v)) < 1e-9 ? String(Math.round(v)) : (+v.toPrecision(5)).toString());
+  const same = (a, b) => a !== null && a !== undefined && b !== null && b !== undefined && Math.abs(a - b) <= 1e-6 * Math.max(1, Math.abs(b));
+  const glyph = (n, size) => `<i class="glyph ${NODES[n].kind}" style="--c:${NODES[n].color}${size ? `;width:${size}px;height:${size}px` : ""}"></i>`;
+  const who = (n) => `${glyph(n)}<b>${NODES[n].label}</b>`;
+  const pct = (p) => `${Math.round(p * 100)}%`;
+  const mark = (v, key) => v === null || v === undefined ? "" : (same(v, key) ? `<span class="mark ok">✓ right</span>` : `<span class="mark no">✗ wrong</span>`);
+  const meter = (p, color, threshold, ghost) => `
+    <div class="meter" style="--c:${color}">
+      ${ghost !== undefined ? `<span class="ghost" style="width:${Math.max(0, Math.min(1, ghost)) * 100}%"></span>` : ""}
+      <span class="fill" style="width:${Math.max(0, Math.min(1, p)) * 100}%"></span>
+      <span class="line" style="left:calc(${threshold * 100}% - 1px)" title="delivery line"></span>
+    </div>`;
+
+  // What each member privately had, and whether the right answer existed somewhere unsaid.
+  function privateAnswers(c) {
+    const out = {};
+    if (c.inner.parser && c.inner.parser.value !== null) out.parser = c.inner.parser.value;
+    if (c.inner.reader && c.inner.reader.chosen_value !== null && c.inner.reader.chosen_value !== undefined) out.reader = c.inner.reader.chosen_value;
+    return out;
+  }
+  function knewButLost(c) {
+    if (c.verdict === "right") return [];
+    return Object.entries(privateAnswers(c)).filter(([, v]) => same(v, c.answer)).map(([n]) => n);
+  }
+
+  // ---------------------------------------------------------------- header
+  const tally = { right: 0, wrong: 0, abstain: 0 };
+  CASES.forEach((c) => tally[c.verdict]++);
+  $("#score").innerHTML = `
+    <span class="pill right">${tally.right}/40 right</span>
+    <span class="pill wrong">${tally.wrong} wrong</span>
+    <span class="pill abstain">${tally.abstain} abstained</span>
+    <span class="pill">22 familiar wordings · 18 new</span>`;
+
+  $("#members").innerHTML = ORDER.map((n) => {
+    const k = K[n] || {};
+    const learned = n === "parser" ? `${k.wordings ?? "?"} wordings learned`
+      : n === "reader" ? `${k.programs ?? "?"} programs it can produce`
+      : n === "estimator" ? `${k.examples ?? "?"} examples seen`
+      : `${(k.checks || []).length} kinds of check`;
+    return `<div class="member">
+      <div class="name">${glyph(n, 12)}${NODES[n].label}</div>
+      <span class="kind">${NODES[n].kind}</span>
+      <p class="mini">${NODES[n].role}</p>
+      <p class="mini"><b>${learned}</b></p>
+    </div>`;
+  }).join("");
+
+  // ---------------------------------------------------------------- participation
+  const stats = {};
+  ORDER.forEach((n) => stats[n] = { looked: 0, bid: 0, led: 0, reviewed: 0, objected: 0, delivered: 0, right: 0, privately: 0 });
+  CASES.forEach((c) => {
+    c.auction.forEach((t) => { if (t.compute > 0 || t.action === "bid") stats[t.node].looked++; if (t.action === "bid") stats[t.node].bid++; });
+    c.steps.forEach((s) => {
+      if (s.type === "proposal") stats[s.node].led++;
+      if (s.type === "review") { stats[s.reviewer].reviewed++; if (s.verdict === "reject") stats[s.reviewer].objected++; }
+    });
+    if (c.final) { stats[c.final.node].delivered++; if (c.verdict === "right") stats[c.final.node].right++; }
+    Object.entries(privateAnswers(c)).forEach(([n, v]) => { if (same(v, c.answer)) stats[n].privately++; });
+  });
+  const cols = [["looked", "looked"], ["bid", "bid"], ["led", "led"], ["reviewed", "asked to review"],
+    ["objected", "objected"], ["delivered", "gave the answer"], ["right", "…and right"], ["privately", "had it privately"]];
+  $("#participation").innerHTML = `<thead><tr><th>member</th>${cols.map(([, l]) => `<th>${l}</th>`).join("")}</tr></thead>
+    <tbody>${ORDER.map((n) => `<tr><td>${who(n)}</td>${cols.map(([k]) => {
+      const v = stats[n][k];
+      const solvesOnly = ["looked", "bid", "led", "delivered", "right", "privately"].includes(k) && (n === "estimator" || n === "checker");
+      return `<td class="num">${solvesOnly ? '<span class="muted">—</span>' : v}</td>`;
+    }).join("")}</tr>`).join("")}</tbody>`;
+
+  // ---------------------------------------------------------------- sheet + filters
+  const FILTERS = [["all", "All 40"], ["right", "Right"], ["wrong", "Wrong"], ["abstain", "Abstained"], ["new", "New wording"], ["knew", "Right answer went unsaid"]];
+  let filter = "all";
+  let current = 1;
+  const passes = (c) => filter === "all" || c.verdict === filter || (filter === "new" && c.phrasing === "new") || (filter === "knew" && knewButLost(c).length);
+  function drawFilters() {
+    $("#filters").innerHTML = FILTERS.map(([k, l]) => `<button type="button" id="f-${k}" data-f="${k}" aria-pressed="${filter === k}">${l}</button>`).join("");
+  }
+  function drawSheet() {
+    $("#sheet").innerHTML = CASES.map((c) => `<button type="button" class="tile${passes(c) ? "" : " dim"}" id="t-${c.id}" data-id="${c.id}" data-v="${c.verdict}"
+      aria-current="${c.id === current}" aria-label="Question ${c.id}, ${c.verdict}">${c.id}${knewButLost(c).length ? '<i class="knew"></i>' : ""}</button>`).join("");
+  }
+  $("#filters").addEventListener("click", (e) => {
+    const b = e.target.closest("button"); if (!b) return;
+    filter = b.dataset.f; drawFilters(); drawSheet();
+    const first = CASES.find(passes); if (first && !passes(CASES[current - 1])) show(first.id);
+  });
+  $("#sheet").addEventListener("click", (e) => { const b = e.target.closest(".tile"); if (b) { show(+b.dataset.id); $("#case").scrollIntoView({ behavior: "smooth", block: "start" }); } });
+
+  // ---------------------------------------------------------------- the case file
+  function story(c) {
+    const finalBy = c.final ? NODES[c.final.node].label : null;
+    const priv = privateAnswers(c);
+    const bits = [];
+    const spoke = c.auction.filter((t) => t.action === "bid").map((t) => NODES[t.node].label);
+    const quiet = c.auction.filter((t) => t.action === "declined").map((t) => NODES[t.node].label);
+    if (spoke.length) bits.push(`${spoke.join(" and ")} bid${spoke.length === 1 ? "" : " for it"}${quiet.length ? `; ${quiet.join(" and ")} stayed out` : ""}.`);
+    else bits.push("Nobody bid: every member judged it couldn't help.");
+    const reviews = c.steps.filter((s) => s.type === "review");
+    const rejects = reviews.filter((s) => s.verdict === "reject");
+    if (reviews.length) bits.push(`${reviews.length} review${reviews.length > 1 ? "s" : ""} asked for${rejects.length ? `, ${rejects.length} objection${rejects.length > 1 ? "s" : ""}` : ", no objections"}.`);
+    if (c.final) bits.push(`The council answered ${num(c.final.value)} from the ${finalBy} with belief ${c.final.belief.toFixed(2)}${c.verdict === "right" ? ", which is right." : `, but the answer is ${num(c.answer)}.`}`);
+    else bits.push(`It abstained. The answer is ${num(c.answer)}.`);
+    const lost = knewButLost(c);
+    if (lost.length) bits.push(`<b>${lost.map((n) => NODES[n].label).join(" and ")} had ${num(c.answer)} privately</b> but it wasn't delivered.`);
+    else if (c.verdict !== "right" && Object.keys(priv).length) bits.push("No member had the right answer, even privately.");
+    return bits.join(" ");
+  }
+
+  function stageReading(c) {
+    const r = c.reading;
+    const rows = [];
+    if (r.numbers.length) rows.push(["numbers", r.numbers.map(num).join(", ")]);
+    if (r.lists.length) rows.push(["list", r.lists.map((l) => l.map(num).join(", ")).join(" · ")]);
+    if (r.equations.length) rows.push(["equation", r.equations.join(" · ")]);
+    if (r.functions.length) rows.push(["function", r.functions.join(" · ")]);
+    if (r.calls.length) rows.push(["call", r.calls.join(" · ")]);
+    if (r.expressions.length) rows.push(["expression", r.expressions.join(" · ")]);
+    return `<div class="stage">
+      <div class="head"><span class="n">1</span><h3>Reading the notation</h3></div>
+      <p class="mini">The Parser's built-in knowledge. It pulls out the maths and leaves the wording as a skeleton, which is what everyone has to make sense of.</p>
+      <div class="tokens">${r.skeleton.map((t) => `<span class="tok${t.startsWith("<") || t === "#" ? " ph" : ""}">${esc(t)}</span>`).join("")}</div>
+      <dl class="kv">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join("")}<dt>shape</dt><dd>${esc(c.context.join(" · "))}</dd></dl>
+    </div>`;
+  }
+
+  function cardParser(c) {
+    const p = c.inner.parser || {};
+    const sims = (p.similar || []).map((s) => `<div class="row"><span class="label">${esc(s.wording)}${s.program ? ` → ${esc(s.program)}` : ""}</span><span class="mini">${s.similarity.toFixed(2)}</span>
+      <div class="bar" style="--c:var(--parser)"><i style="width:${s.similarity * 100}%"></i></div></div>`).join("");
+    const cues = (p.cues || []).filter((x) => x.strength >= 0.3).map((x) => `<span class="chip">'${esc(x.word)}' → ${esc(x.means)} <b>${x.strength.toFixed(1)}</b></span>`).join("");
+    return `<div class="icard" style="--c:var(--parser)">
+      <div class="top"><span class="who">${who("parser")}</span><span class="chip">${esc(MODES[p.mode] || p.mode || "—")}</span></div>
+      <div class="claim"><span class="big">${p.program ? esc(p.program) + " = " + num(p.value) : "no reading"}</span>${p.program ? mark(p.value, c.answer) : ""}</div>
+      <p class="mini">${esc(p.why || "")}</p>
+      ${sims ? `<div class="rows"><span class="eyebrow">closest wordings it knows</span>${sims}</div>` : ""}
+      ${cues ? `<div class="rows"><span class="eyebrow">word meanings it hears</span><div class="chips">${cues}</div></div>` : ""}
+    </div>`;
+  }
+  function cardReader(c) {
+    const r = c.inner.reader || {};
+    const top = (r.top || []).map((t) => `<div class="row"><span class="label">${esc(t.program)} ${t.runs ? "= " + num(t.value) : "<span class='muted'>(doesn't fit)</span>"} ${t.runs ? mark(t.value, c.answer) : ""}</span><span class="mini">${pct(t.p)}</span>
+      <div class="bar" style="--c:var(--reader)"><i style="width:${t.p * 100}%"></i></div></div>`).join("");
+    const chips = [r.agree === null ? "" : `<span class="chip">${r.agree ? "all 3 networks agree" : "networks disagree"}</span>`,
+      r.novel ? `<span class="chip warn">never seen this combination</span>` : r.novel === false ? `<span class="chip">familiar combination</span>` : ""].join("");
+    return `<div class="icard" style="--c:var(--reader)">
+      <div class="top"><span class="who">${who("reader")}</span></div>
+      <div class="claim"><span class="big">${r.chosen ? esc(r.chosen) + " = " + num(r.chosen_value) : "no reading"}</span>${r.chosen ? mark(r.chosen_value, c.answer) : ""}</div>
+      <div class="chips">${chips}</div>
+      ${top ? `<div class="rows"><span class="eyebrow">how it reads the question</span>${top}</div>` : ""}
+      ${(r.important_words || []).length ? `<p class="mini">Words its networks lean on here: ${r.important_words.map((w) => `<b>${esc(w)}</b>`).join(", ")}</p>` : ""}
+    </div>`;
+  }
+  function cardEstimator(c) {
+    const e = c.inner.estimator || {};
+    const body = !e.ready ? `<p class="mini">Not trained enough yet.</p>`
+      : `<div class="claim"><span class="big">about ${num(e.about)}</span></div>
+         <p class="mini">Would accept roughly ${num(e.range[0])} to ${num(e.range[1])}.</p>
+         <p class="mini">${e.has_feel ? `Familiar enough to judge (${pct(1 - e.unfamiliar)} of the wording seen before).` : `Too unfamiliar to judge (${pct(e.unfamiliar)} of the wording is new), so it would abstain.`}</p>`;
+    return `<div class="icard" style="--c:var(--estimator)"><div class="top"><span class="who">${who("estimator")}</span></div>${body}</div>`;
+  }
+  function cardChecker(c) {
+    const k = c.inner.checker || {};
+    const rows = (k.checks || []).map((x) => `<div class="row"><span class="label">${esc(x.check)}${x.trusted ? " · trusted" : ""}</span><span class="mini">${pct(x.reliability)}</span>
+      <div class="bar" style="--c:var(--checker)"><i style="width:${x.reliability * 100}%"></i></div></div>`).join("");
+    return `<div class="icard" style="--c:var(--checker)"><div class="top"><span class="who">${who("checker")}</span></div>
+      <p class="mini">Checks that apply here, and how often each one has held for this kind of question. It only objects using checks it trusts (97%+).</p>
+      <div class="rows">${rows || '<p class="mini">No check applies.</p>'}</div></div>`;
+  }
+
+  function stagePrivate(c) {
+    return `<div class="stage">
+      <div class="head"><span class="n">2</span><h3>What each member privately works out</h3></div>
+      <p class="mini">Computed before anyone speaks. A member may have the right answer here and still stay quiet if its record in this situation is weak.</p>
+      <div class="inner">${cardParser(c)}${cardReader(c)}${cardEstimator(c)}${cardChecker(c)}</div>
+    </div>`;
+  }
+
+  function stageAuction(c) {
+    const turns = c.auction.map((t) => {
+      if (t.action === "declined") return `<div class="turn quiet"><span class="dot">${glyph(t.node, 12)}</span><div class="body">
+        <div class="line1">${who(t.node)} <span class="muted">stays out</span></div><p class="mini">${esc(t.reason)}</p></div></div>`;
+      return `<div class="turn"><span class="dot">${glyph(t.node, 12)}</span><div class="body">
+        <div class="line1">${who(t.node)} <span>bids</span></div>
+        <div class="meterlabel"><span>its calibrated confidence ${t.p_mean.toFixed(2)}</span><span>council's reading ${t.council_reading.toFixed(2)}</span></div>
+        ${meter(t.council_reading, NODES[t.node].color, c.threshold, t.p_mean)}
+        <p class="mini mono">evidence: ${esc(t.evidence.join(" · "))}</p></div></div>`;
+    }).join("");
+    return `<div class="stage">
+      <div class="head"><span class="n">3</span><h3>The auction</h3></div>
+      <p class="mini">Members speak in order of how cheap it is for them to look. Each decides for itself whether bidding helps the whole council. The faint bar is the member's own confidence; the solid bar is how the others read it.</p>
+      <div class="timeline">${turns || '<p class="mini">Nobody could solve this kind of question.</p>'}</div>
+    </div>`;
+  }
+
+  function stageDeliberation(c) {
+    const items = c.steps.map((s) => {
+      if (s.type === "silence") return `<p class="mini">No member led, so there was nothing to review.</p>`;
+      if (s.type === "proposal") return `<div class="turn"><span class="dot">${glyph(s.node, 12)}</span><div class="body">
+        <div class="line1">${who(s.node)} <span>leads with</span> <span class="mono"><b>${num(s.value)}</b></span> ${mark(s.value, c.answer)}</div>
+        <p class="mini mono">${esc(s.rationale)}</p>
+        <p class="mini">its confidence ${s.confidence.toFixed(2)}</p></div></div>`;
+      const counter = s.counter ? `<p class="mini">${NODES[s.counter.node].label} counter-proposes <b class="mono">${num(s.counter.value)}</b> ${mark(s.counter.value, c.answer)}</p>` : "";
+      const verb = s.verdict === "endorse" ? "agrees" : s.verdict === "reject" ? "objects" : "can't judge";
+      return `<div class="turn"><span class="dot">${glyph(s.reviewer, 12)}</span><div class="body">
+        <div class="line1">${who(s.lead)} <span class="muted">asks</span> ${who(s.reviewer)} <span class="verdict ${s.verdict}">${verb}</span></div>
+        <p class="mini">${esc(s.rationale)}</p>${counter}
+        <div class="meterlabel"><span>belief ${s.belief_before.toFixed(2)} → <b>${s.belief_after.toFixed(2)}</b></span><span>${s.evidence.length ? esc(s.evidence.join(" · ")) : ""}</span></div>
+        ${meter(s.belief_after, NODES[s.lead].color, c.threshold, s.belief_before)}</div></div>`;
+    }).join("");
+    const lone = c.steps.filter((s) => s.type === "proposal").length && !c.steps.some((s) => s.type === "review");
+    return `<div class="stage">
+      <div class="head"><span class="n">4</span><h3>Deliberation</h3></div>
+      <p class="mini">The lead buys a review only when the reviewer's verdict is worth more than its compute. A confident lead often skips it.</p>
+      <div class="timeline">${items}${lone ? '<p class="mini">The lead was confident enough that no review was worth its cost.</p>' : ""}</div>
+    </div>`;
+  }
+
+  function stageDecision(c) {
+    const w = (c.weighing || []).map((x) => `<div class="turn"><span class="dot">${glyph(x.node, 12)}</span><div class="body">
+      <div class="line1">${who(x.node)} <span class="mono"><b>${num(x.value)}</b></span> ${mark(x.value, c.answer)}</div>
+      <div class="meterlabel"><span>belief ${x.belief_after.toFixed(2)}</span><span>${x.belief_after >= c.threshold ? "clears the line" : "below the line"}</span></div>
+      ${meter(x.belief_after, NODES[x.node].color, c.threshold, x.belief_before)}</div></div>`).join("");
+    const out = c.final
+      ? `<div class="outcome"><span class="ans">${num(c.final.value)}</span><span class="pill ${c.verdict}">${c.verdict === "right" ? "right" : "wrong"}</span><span class="muted">from the ${NODES[c.final.node].label} · belief ${c.final.belief.toFixed(2)} · answer key ${num(c.answer)}</span></div>`
+      : `<div class="outcome"><span class="ans">—</span><span class="pill abstain">abstained</span><span class="muted">answer key ${num(c.answer)}</span></div>`;
+    return `<div class="stage">
+      <div class="head"><span class="n">5</span><h3>The decision</h3></div>
+      <p class="mini">Every candidate answer, with the council's final belief in it. Answers that can't both be right are weighed against each other. Only one that clears the line is delivered.</p>
+      <div class="timeline">${w || '<p class="mini">No candidates.</p>'}</div>
+      <div class="verdictbox">${out}<p class="mini">Total compute: ${c.compute} units</p></div>
+    </div>`;
+  }
+
+  function show(id) {
+    current = id;
+    const c = CASES[id - 1];
+    $("#case").innerHTML = `
+      <div class="qcard">
+        <div class="scoreline"><span class="eyebrow">Question ${c.id} of 40</span><span class="pill">${esc(c.topic)}</span><span class="pill">${c.phrasing === "new" ? "new wording" : "familiar wording"}</span><span class="pill ${c.verdict}">${c.verdict}</span></div>
+        <p class="qtext">${esc(c.question)}</p>
+        <p class="story">${story(c)}</p>
+      </div>
+      ${stageReading(c)}${stagePrivate(c)}${stageAuction(c)}${stageDeliberation(c)}${stageDecision(c)}
+      <div class="nav"><button type="button" id="prev">← Question ${id > 1 ? id - 1 : 40}</button><button type="button" id="next">Question ${id < 40 ? id + 1 : 1} →</button></div>`;
+    $("#prev").onclick = () => show(id > 1 ? id - 1 : 40);
+    $("#next").onclick = () => show(id < 40 ? id + 1 : 1);
+    drawSheet();
+    try { history.replaceState(null, "", "#q" + id); } catch (e) { /* hash routing is optional */ }
+  }
+
+  drawFilters();
+  const fromHash = () => { const m = /^#q(\d+)$/.exec(location.hash); return m && +m[1] >= 1 && +m[1] <= 40 ? +m[1] : null; };
+  const start = fromHash() || (CASES.find((c) => knewButLost(c).length) || CASES[0]).id;
+  show(start);
+  window.addEventListener("hashchange", () => { const h = fromHash(); if (h && h !== current) show(h); });
+})();
+</script>

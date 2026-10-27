@@ -2,3 +2,4 @@ __pycache__/
 *.pyc
 results/results.json
 results/maths_council.pkl
+results/council_trace.json

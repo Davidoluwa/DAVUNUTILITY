@@ -5,6 +5,7 @@
   python -m synod.maths chat                              ask questions interactively
   python -m synod.maths report [--seeds N]                compare strategies, write results/MATHS_REPORT.md
   python -m synod.maths exam [--seed S]                   40 hand-written questions -> results/EXAM_REPORT.md
+  python -m synod.maths trace [--seed S]                  full council traces -> results/council_viewer.html
 """
 from __future__ import annotations
 
@@ -76,6 +77,8 @@ def main(argv=None):
     ex = sub.add_parser("exam")
     ex.add_argument("--seed", type=int, default=0)
     ex.add_argument("--no-compare", action="store_true", help="skip the single-node and gate baselines")
+    tr = sub.add_parser("trace")
+    tr.add_argument("--seed", type=int, default=0)
     args = ap.parse_args(argv)
 
     if args.cmd == "train":
@@ -86,6 +89,11 @@ def main(argv=None):
     elif args.cmd == "exam":
         from .exam import main as exam_main
         exam_main(args.seed, compare=not args.no_compare)
+    elif args.cmd == "trace":
+        from .trace import build_viewer, export
+        data = export(seed=args.seed)
+        print(f"traced {len(data['cases'])} questions -> results/council_trace.json")
+        print(f"viewer -> {build_viewer(data)}")
     elif args.cmd == "chat":
         council = load()
         print("ask me a maths question (empty line to quit)")

@@ -23,6 +23,7 @@ python -m synod.maths ask "Suppose 2*n + 6 = 20. What is n times 8?"
 python -m synod.maths chat                  # ask questions interactively
 python -m synod.maths report --seeds 3      # compare strategies -> results/MATHS_REPORT.md
 python -m synod.maths exam                  # 40 hand-written questions -> results/EXAM_REPORT.md
+python -m synod.maths trace                 # every deliberation, step by step -> results/council_viewer.html
 python -m synod --seeds 5                   # the sequence world -> results/REPORT.md
 python -m unittest discover -s tests -t .   # 36 tests
 ```
