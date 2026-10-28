@@ -42,6 +42,7 @@ class Task:
     context: tuple = ()
     split: str = ""
     features: tuple = ()
+    solution: tuple = ()  # hidden reference method, for evaluation only (never in the view)
 
     def view(self, pressure: float = 0.0) -> TaskView:
         return TaskView(self.id, self.history, self.tolerance, pressure, self.question, self.context, self.features)

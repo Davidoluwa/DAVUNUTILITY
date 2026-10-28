@@ -9,10 +9,11 @@ Synod is a working prototype of a neurosymbolic intelligence system where:
 - who does what is **not a programmed gate**. A router and a judge are trained during training, from which answers turned out right, the way a mixture-of-experts layer trains its gate;
 - the symbolic nodes **learn and adapt** too: they learn how to search, invent concepts, learn what words mean, and revise their beliefs.
 
-The same council runs in two worlds:
+It runs in three settings:
 
 1. **Sequences**: "what comes next?" tasks with faults and distribution shift injected on purpose. This world shows the self-organisation and self-healing.
 2. **Maths**: the council learns what maths questions *mean* purely from answered examples, then answers new ones, including wordings, word problems and combinations it has never seen.
+3. **The room**: a much larger council (42 small experts) that works maths problems out **step by step**, with a deliberation behind every step, on a denser curriculum of one- to four-step problems. Every expert volunteers at every step; they all learn in the same room from the worked solutions the room discovers itself.
 
 Plain Python + NumPy, no other dependencies.
 
@@ -25,7 +26,10 @@ python -m synod.maths report --seeds 10     # compare strategies -> results/MATH
 python -m synod.maths exam                  # 40 hand-written questions -> results/EXAM_REPORT.md
 python -m synod.maths trace                 # every exam deliberation, step by step -> results/council_viewer.html
 python -m synod --seeds 10                  # the sequence world -> results/REPORT.md
-python -m unittest discover -s tests -t .   # 35 tests
+python -m synod.room train                  # the room (~4 min): 42 experts learn the dense curriculum
+python -m synod.room ask "Ann has 12 apples. She buys 3 bags with 5 apples in each, then gives away 4. How many apples does Ann have now?"
+python -m synod.room report --seeds 4       # room vs the council, ablations, exam -> results/ROOM_REPORT.md + room_viewer.html
+python -m unittest discover -s tests -t .   # 44 tests
 ```
 
 ---
@@ -202,6 +206,63 @@ Q #4750: Kofi had 29 cards and used 8. How many cards remain?  (hidden type: sto
 
 ---
 
+# Part 3: The room, a large council that works problems out step by step
+
+The council in Part 2 answers a question in one go. **The room works it out**: a sequence of exact steps on a shared workspace, with a deliberation behind every step, by 42 small experts that all volunteer at every step and all learn in the same room from the same signals.
+
+| who | how many | kind | what it does |
+|---|---|---|---|
+| operators | 28 | symbolic | one per exact operation (add, solve, gcd, round, mean, …); each learned **when** it's the next move and **which facts** to apply it to, from the words around them |
+| neural pool | 8 | neural | small networks, each reading the question through its own random view; they say **what** should happen next, and the operator for that operation decides what to apply it to. Trained as a mixture of experts |
+| memory, analogy | 2 | symbolic | recall worked solutions of the same or the most similar wording |
+| goal | 1 | symbolic | knows when a solution is finished |
+| checker, estimator, lexicon | 3 | review | checks with learned reliability; a sense of size; which words a step accounts for and which a finished solution leaves unexplained |
+
+**One step of deliberation.** Every expert proposes the next step it believes in. Operators speak as a group (each one's readiness is read relative to all the others', like a softmax over experts). Experts proposing the same step back the same candidate; reviewers report on its result; a learned judge weighs the candidates and "none of these". The room keeps the three most probable partial solutions open, routes that reach the same answer pool, and it answers only if the answer reaches probability 0.5.
+
+**Learning together.** Nobody shows it a worked solution. On a question whose answer is revealed, the room finds its own: its route if it was right, otherwise a search guided by its own experts and judge. That solution is broadcast: every expert learns its part, the judge learns whom to trust at each step (with experts randomly left out, so it learns what each is worth on its own), and every expert's self-model learns how often its proposals were the step the solution needed.
+
+**A denser curriculum.** 75 kinds of question, one to four steps: percentages, increases and decreases, areas and perimeters, averages, ranges, speed and distance, making change, chained word problems, compositions. 8,000 practice questions, half with the answer revealed (never the method). Then six test sets with no answers.
+
+### Results (4 seeds; % right, wrong in brackets, the rest abstentions)
+
+| strategy | familiar | new wording | numbers ×100 | word problems* | new combinations | four steps** |
+|---|---|---|---|---|---|---|
+| **the room (42 experts)** | **98% (2%)** | 75% (13%) | 97% (2%) | 57% (12%) | 39% (27%) | **14% (22%)** |
+| room, operators only (no neural, memory or analogy) | 89% (3%) | 71% (8%) | 92% (2%) | 38% (1%) | **53% (13%)** | 1% (10%) |
+| room, one neural expert | 98% (1%) | **77% (9%)** | 98% (2%) | 44% (8%) | 52% (19%) | 0% (19%) |
+| room, cross-fitted (sparring benches) | 92% (3%) | 55% (10%) | 96% (1%) | 15% (8%) | 23% (12%) | 0% (8%) |
+| council v2 (question → answer), same curriculum | 87% (2%) | 54% (9%) | 97% (0%) | **64% (30%)** | 8% (43%) | 0% (42%) |
+
+\* held-out templates, names and objects, one to three steps. \*\* longer than anything in training.
+
+- **Step by step beats question → answer** on familiar wordings (98% vs 87%), new wordings (75% vs 54%), new combinations (39% vs 8%, and 27% wrong vs 43%) and four-step problems (14% vs 0%), ties on big numbers, and loses on word problems (57% vs 64%), where the old council is wrong on 30% of them.
+- **Right for the right reason.** On one- to three-step test sets, 89–95% of the room's right answers use the same method as the hidden reference program. On four-step problems only 25% do: most of its right answers there took a different route to the same number. Every answer comes with its worked steps.
+- **A division of labour emerged between kinds of expert**: memory backs 99% of steps on familiar wordings, analogy 93–100% on new phrasings, operators most on new combinations (69%) and four-step problems (80%).
+- **What didn't happen:** the neural pool did not specialise. It was trained as a mixture of experts, but every network ended up backing nearly every kind of question (entropy ≈ 5.9 bits of a possible 6.2). And it hurts on new combinations: operators alone get 53% there, against 39% for the full room. The pool copies familiar sentence frames, and the judge learned to trust it on training data where those frames were always right.
+- **High variance between runs.** With the same data and different random starts, new combinations ranged 19–56% and four-step problems 0–50%: every question of a new kind shares its features, so the whole kind flips at once. Read the averages, not single runs.
+- **Exam:** 34/40 right, 2 wrong (the council v2 trained on the same curriculum: 31/40, 5 wrong).
+
+A worked solution from the report (four steps, longer than anything in training; trimmed):
+
+```text
+Q: Priya has 52 beads. Priya buys 4 bags with 10 beads in each bag, then gives away 7.
+   Priya shares the rest equally among 5 friends. How many beads does each friend get?
+  on the table: N1 = 52, N2 = 4, N3 = 10, N4 = 7, N5 = 5
+  Step 1: 4 × 10 = 40     mul(N2,N3)  judge 0.88  backed by neural-7 0.98, neural-6 0.92, neural-5 0.84 +6 more
+  Step 2: 52 + 40 = 92    add(N1,S1)  judge 1.00  backed by add 0.99, neural-5 0.99, neural-7 0.98 +5 more
+  Step 3: 92 − 7 = 85     sub(S2,N4)  judge 0.94  backed by neural-6 0.61, neural-4 0.47, sub 0.18
+  Step 4: 85 ÷ 5 = 17     div(S3,N5)  judge 0.67  backed by neural-3 0.32, div 0.00
+          reviews: checker whole-number pass (trusted), lexicon explains: hi
+          also on the table: stop here 0.26 (neural-1 +6)
+  Done: the answer is 17  judge 1.00  backed by goal 0.99, neural-6 0.96 +7 more · lexicon: nothing left unexplained
+  => 17   probability 0.56   [truth 17: correct]
+```
+
+The **[room viewer](results/room_viewer.html)** shows every step of the 40 exam questions and of samples from each test set: who proposed what, how sure each was, what the reviewers said, every rival on the table and why the judge weighed it so. `results/ROOM_REPORT.md` has the full report. The design, and what was tried and cut along the way, are in `docs/ARCHITECTURE.md` section 10.
+
+---
+
 ## What changed from v1, and what got cut
 
 v1 ran a hand-designed auction. Each node decided whether to look and bid, and the bids were ranked through each peer's trust map. A lead then bought reviews by a value-of-information formula, and rival answers were reconciled by a fixed rule. Every one of those steps was a formula someone wrote. v2 replaces the decision-making with two models trained on outcomes, and deletes the rest:
@@ -260,8 +321,15 @@ synod/
       world.py       the maths curriculum and its held-out test sets
       exam.py, trace.py, viewer.html          the 40-question exam and its step-by-step viewer
       experiment.py, report.py, __main__.py  train / ask / chat / report
+    room/
+      workspace.py   facts, 28 exact operations, steps, worked solutions in words
+      world.py       the dense curriculum: 75 kinds of question, one to four steps, six test sets
+      experts.py     the population: operators, neural pool, memory, analogy, goal, checker, estimator, lexicon
+      room.py        deliberation (judge, beam, pooled routes), finding worked solutions, learning together
+      transcript.py, trace.py, viewer.html    worked solutions with their deliberation, as text and as a page
+      experiment.py, report.py, exam.py, __main__.py
     transcript.py    renders a deliberation as text
-  tests/             35 tests (unittest)
+  tests/             44 tests (unittest)
   docs/ARCHITECTURE.md   the mechanics and the maths behind them
-  results/           REPORT.md (sequences), MATHS_REPORT.md, EXAM_REPORT.md, council_viewer.html
+  results/           REPORT.md (sequences), MATHS_REPORT.md, EXAM_REPORT.md, ROOM_REPORT.md, council_viewer.html, room_viewer.html
 ```

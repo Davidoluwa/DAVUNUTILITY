@@ -198,6 +198,7 @@ class Reading:
     calls: list = field(default_factory=list)  # (name, Fraction)
     exprs: list = field(default_factory=list)  # Poly
     words: tuple = ()
+    texts: dict = field(default_factory=dict)  # (slot kind, index) -> the notation as written
 
     @property
     def slots(self) -> str:
@@ -260,6 +261,9 @@ def read(text: str) -> Reading:
     def seg_tokens(s):
         return [toks[k][0] for k in range(s[0], s[1] + 1)]
 
+    def seg_text(a, b):
+        return text[toks[a][1]:toks[b][2]]
+
     def as_number(ts):
         if len(ts) == 1 and _is_num(ts[0]):
             return Fraction(ts[0])
@@ -302,11 +306,13 @@ def read(text: str) -> Reading:
                 placeholder[s[0]] = "<list>"
                 # swallow separators inside the list
                 last = segs[max(run)]
+                r.texts[("L", len(r.lists) - 1)] = seg_text(s[0], last[1])
                 covered.update(range(s[0], last[1] + 1))
             continue
         num = as_number(ts)
         if num is not None:
             r.nums.append(num)
+            r.texts[("N", len(r.nums) - 1)] = seg_text(*s)
             placeholder[s[0]] = "#"
             continue
         if ts.count("=") == 1:
@@ -315,6 +321,7 @@ def read(text: str) -> Reading:
                 body = parse_poly(rhs)
                 if body is not None:
                     r.fdefs.append((lhs[0], body))
+                    r.texts[("F", len(r.fdefs) - 1)] = seg_text(*s)
                     fn_names.add(lhs[0])
                     var_names.add(lhs[2])
                     placeholder[s[0]] = "<fdef>"
@@ -327,6 +334,7 @@ def read(text: str) -> Reading:
                     eq = None
                 if eq is not None:
                     r.eqs.append(eq)
+                    r.texts[("Q", len(r.eqs) - 1)] = seg_text(*s)
                     if eq.var:
                         var_names.add(eq.var)
                     placeholder[s[0]] = "<eq>"
@@ -335,12 +343,14 @@ def read(text: str) -> Reading:
             arg = parse_poly(ts[2:-1])
             if arg is not None and arg.is_const:
                 r.calls.append((ts[0], arg.value))
+                r.texts[("C", len(r.calls) - 1)] = seg_text(*s)
                 fn_names.add(ts[0])
                 placeholder[s[0]] = "<call>"
                 continue
         p = parse_poly(ts)
         if p is not None:
             r.exprs.append(p)
+            r.texts[("X", len(r.exprs) - 1)] = seg_text(*s)
             if p.var:
                 var_names.add(p.var)
             placeholder[s[0]] = "<expr>" if p.is_const else "<poly>"

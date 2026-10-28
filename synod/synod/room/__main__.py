@@ -1,0 +1,115 @@
+"""The room: a large council that solves maths step by step.
+
+  python -m synod.room train [--seed S]          train the room (a few minutes), save it
+  python -m synod.room ask "Suppose 3*n - 4 = 11. What is n times 6?"
+  python -m synod.room chat                      ask questions interactively
+  python -m synod.room report [--seeds N]        compare with the old council -> results/ROOM_REPORT.md
+  python -m synod.room exam                      the 40-question exam, step by step
+  python -m synod.room trace                     every exam deliberation -> results/room_viewer.html
+"""
+from __future__ import annotations
+
+import argparse
+import os
+import pickle
+import sys
+import time
+
+from ..protocol import Task
+from .transcript import render
+
+MODEL = os.path.join("results", "room.pkl")
+
+
+def train(seed: int = 0, verbose: bool = True):
+    from .world import RoomScenario, RoomWorld
+    from .room import make_room
+    world = RoomWorld(RoomScenario(seed=seed, n_per_test_split=0))
+    room = make_room(seed=seed)
+    t0 = time.time()
+    for k, task in enumerate(world.train_stream(), 1):
+        room.handle(task)
+        if verbose and k % 1000 == 0:
+            print(f"  {k} practice questions ({time.time() - t0:.0f}s)", flush=True)
+    room.config.learn = False
+    return room
+
+
+def load():
+    if not os.path.exists(MODEL):
+        print("no trained room yet; training one (a few minutes)...", file=sys.stderr)
+        room = train(verbose=False)
+        save(room)
+    else:
+        with open(MODEL, "rb") as fh:
+            room = pickle.load(fh)
+    room.config.learn = False
+    return room
+
+
+def save(room):
+    os.makedirs(os.path.dirname(MODEL), exist_ok=True)
+    with open(MODEL, "wb") as fh:
+        pickle.dump(room, fh)
+
+
+def ask(room, question: str) -> str:
+    task = Task(10 ** 7, (), 1e-6, None, "", False, question=question, split="ask")
+    return render(task, room.handle(task), judge=room.judge)
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(prog="python -m synod.room")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    t = sub.add_parser("train")
+    t.add_argument("--seed", type=int, default=0)
+    a = sub.add_parser("ask")
+    a.add_argument("question", nargs="+")
+    sub.add_parser("chat")
+    rp = sub.add_parser("report")
+    rp.add_argument("--seeds", type=int, default=3)
+    sub.add_parser("exam")
+    sub.add_parser("trace")
+    args = ap.parse_args(argv)
+
+    if args.cmd == "train":
+        room = train(args.seed)
+        save(room)
+        print(f"saved to {MODEL} ({len(room.experts)} experts)")
+    elif args.cmd == "ask":
+        print(ask(load(), " ".join(args.question)))
+    elif args.cmd == "chat":
+        room = load()
+        print("Ask a maths question (empty line to quit).")
+        while True:
+            try:
+                q = input("> ").strip()
+            except EOFError:
+                break
+            if not q:
+                break
+            print(ask(room, q))
+    elif args.cmd == "report":
+        from .exam import sit_council, sit_room, train_curriculum_only
+        from .report import compare, write
+        from .trace import build_viewer, export
+        seeds = list(range(args.seeds))
+        table, extras = compare(seeds)
+        room = train_curriculum_only(0)
+        exam = {**sit_room(room=room), "council v2 (question -> answer)": sit_council()}
+        save(room)
+        path = os.path.join("results", "ROOM_REPORT.md")
+        write(table, extras, seeds, path, exam)
+        print(f"report written to {path}; viewer -> {build_viewer(export(room=room))}")
+    elif args.cmd == "exam":
+        from .exam import sit_room
+        for name, (r_, w_, a_) in sit_room(verbose=True).items():
+            print(f"{name}: {r_}/40 right, {w_} wrong, {a_} abstained")
+    elif args.cmd == "trace":
+        from .trace import build_viewer, export
+        data = export()
+        print(f"traced {len(data['cases'])} questions -> {build_viewer(data)}")
+
+
+if __name__ == "__main__":
+    main()
