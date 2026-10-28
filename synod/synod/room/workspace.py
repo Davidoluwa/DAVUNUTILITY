@@ -14,6 +14,7 @@ learn steps from one question and reuse them on another.
 """
 from __future__ import annotations
 
+import itertools
 import math
 from dataclasses import dataclass
 from fractions import Fraction
@@ -24,6 +25,24 @@ from ..maths.programs import BINARY, BIG, CONSTANTS, LIST_OPS, UNARY, _solve
 
 NUM, CONST, LIST, EQ, FDEF, CALL, EXPR, POLY = "num", "const", "list", "eq", "fdef", "call", "expr", "poly"
 STOP = "answer"  # the token for "the last result is the answer"
+INSUFFICIENT = "insufficient"  # the token for "the question doesn't give enough to answer it"
+TERMINAL = (STOP, INSUFFICIENT)
+
+
+class _Unknowable:
+    """The outcome "not enough information": a claim about the question, not a
+    number, and not the same as abstaining (which is "I'm not sure")."""
+
+    __slots__ = ()
+
+    def __repr__(self):
+        return "UNKNOWABLE"
+
+    def __reduce__(self):
+        return "UNKNOWABLE"
+
+
+UNKNOWABLE = _Unknowable()
 
 
 def _round(a: Fraction, k: Fraction) -> Optional[Fraction]:
@@ -60,6 +79,68 @@ _EXTRA_UNARY = {"abs": _abs}
 
 
 @dataclass(frozen=True)
+class Procedure:
+    """An operation the room invented: a chain of exact operations with
+    parameters ("$", i) and constants ("K", k), e.g. ("div", ("mul", ("$", 0),
+    ("$", 1)), ("K", 100)). It runs exactly like the operations it is made of."""
+    name: str
+    body: tuple
+    sig: tuple  # accepted fact kinds per parameter
+    comm: bool = False
+
+    def run(self, vals):
+        def ev(p):
+            if p[0] == "$":
+                return vals[p[1]]
+            if p[0] == "K":
+                return Fraction(p[1])
+            args = [ev(a) for a in p[1:]]
+            if any(a is None for a in args):
+                return None
+            return run_op(p[0], args)
+        return ev(self.body)
+
+    def describe(self) -> str:
+        """The body in maths notation, e.g. "(a × b) ÷ 100"."""
+        letters = "abcdefgh"
+
+        def show(p, top=False):
+            if p[0] == "$":
+                return letters[p[1]]
+            if p[0] == "K":
+                return str(p[1])
+            args = [show(a) for a in p[1:]]
+            if p[0] in SYMBOL and len(args) == 2:
+                out = f"{args[0]} {SYMBOL[p[0]]} {args[1]}"
+                return out if top else f"({out})"
+            return f"{p[0]}({', '.join(args)})"
+        return show(self.body, True)
+
+
+PROCS: dict = {}  # name -> Procedure, for every procedure any room in this process has invented
+
+
+def register(proc: Procedure) -> Procedure:
+    PROCS[proc.name] = proc
+    return proc
+
+
+def op_info(name: str):
+    """The signature of an operation, built in or invented (None if unknown)."""
+    return OPS.get(name) or PROCS.get(name)
+
+
+def run_op(name: str, vals):
+    if any(v is UNKNOWABLE for v in vals):  # a quantity the question doesn't give
+        return UNKNOWABLE
+    proc = PROCS.get(name)
+    if proc is not None:
+        v = proc.run(vals)
+        return v if v is None or abs(v) < BIG else None
+    return execute(name, vals)
+
+
+@dataclass(frozen=True)
 class Fact:
     ref: str
     kind: str
@@ -76,17 +157,18 @@ class Step:
 
     @property
     def token(self) -> str:
-        return STOP if self.op == STOP else f"{self.op}({','.join(self.args)})"
+        return self.op if self.op in TERMINAL else f"{self.op}({','.join(self.args)})"
 
     @staticmethod
     def parse(token: str) -> "Step":
-        if token == STOP:
-            return Step(STOP)
+        if token in TERMINAL:
+            return Step(token)
         op, rest = token.split("(", 1)
         return Step(op, tuple(a for a in rest[:-1].split(",") if a))
 
 
 ANSWER = Step(STOP)
+CANT = Step(INSUFFICIENT)
 
 _ORDER = {"N": 0, "S": 1, "L": 2, "Q": 3, "F": 4, "C": 5, "X": 6, "K": 7}
 
@@ -139,7 +221,7 @@ class Workspace:
     """Immutable-ish: ``apply`` returns a new workspace, so the room can keep
     several partial solutions alive at once (beam search)."""
 
-    __slots__ = ("reading", "facts", "steps", "values", "used", "where")
+    __slots__ = ("reading", "facts", "steps", "values", "used", "where", "_memo")
 
     def __init__(self, reading: Reading, facts=None, steps=(), values=(), used=frozenset(), where=()):
         self.reading = reading
@@ -148,31 +230,63 @@ class Workspace:
         self.values = tuple(values)  # Fraction per step
         self.used = used  # refs of question facts some step has used
         self.where = tuple(where)  # per step result: the places in the question it is about
+        self._memo = {}  # a workspace never changes, so anything derived from it is computed once
+
+    def __getstate__(self):
+        return {k: getattr(self, k) for k in self.__slots__ if k != "_memo"}
+
+    def __setstate__(self, state):
+        for k, v in state.items():
+            setattr(self, k, v)
+        self._memo = {}
 
     # -- what's on the table ---------------------------------------------
+    @property
+    def table(self) -> dict:
+        """Every fact on the table (question facts, results, constants) by ref."""
+        t = self._memo.get("table")
+        if t is None:
+            t = dict(self.facts)
+            for i, v in enumerate(self.values):
+                t[f"S{i + 1}"] = Fact(f"S{i + 1}", NUM, v, where=self.where[i])
+            for k in CONSTANTS:
+                t[f"K{k}"] = Fact(f"K{k}", CONST, Fraction(k))
+            self._memo["table"] = t
+        return t
+
     def fact(self, ref: str) -> Optional[Fact]:
-        if ref[0] == "K":
-            k = int(ref[1:])
-            return Fact(ref, CONST, Fraction(k)) if k in CONSTANTS else None
-        if ref[0] == "S":
-            i = int(ref[1:]) - 1
-            return Fact(ref, NUM, self.values[i], where=self.where[i]) if 0 <= i < len(self.values) else None
-        return self.facts.get(ref)
+        return self.table.get(ref)
+
+    def size(self, ref: str) -> float:
+        """|value| as a float, for quick comparisons."""
+        m = self._memo.setdefault("size", {})
+        if ref not in m:
+            f = self.fact(ref)
+            known = f is not None and f.kind in (NUM, CONST) and f.value is not UNKNOWABLE
+            m[ref] = abs(float(f.value)) if known else 0.0
+        return m[ref]
 
     def of_kind(self, kinds) -> list:
-        out = [f for f in self.facts.values() if f.kind in kinds]
-        if NUM in kinds:
-            out += [Fact(f"S{i + 1}", NUM, v, where=self.where[i]) for i, v in enumerate(self.values)]
-        if CONST in kinds:
-            out += [Fact(f"K{k}", CONST, Fraction(k)) for k in CONSTANTS]
+        key = ("kind", kinds)
+        out = self._memo.get(key)
+        if out is None:
+            out = [f for f in self.facts.values() if f.kind in kinds]
+            if NUM in kinds:
+                out += [self.table[f"S{i + 1}"] for i in range(len(self.values))]
+            if CONST in kinds:
+                out += [self.table[f"K{k}"] for k in CONSTANTS]
+            self._memo[key] = out
         return out
 
     @property
     def unused(self) -> list:
         """Question facts no step has used yet, plus the last result if nothing used it."""
-        out = [r for r in self.facts if r not in self.used]
-        if self.values and f"S{len(self.values)}" not in self.used:
-            out.append(f"S{len(self.values)}")
+        out = self._memo.get("unused")
+        if out is None:
+            out = [r for r in self.facts if r not in self.used]
+            if self.values and f"S{len(self.values)}" not in self.used:
+                out.append(f"S{len(self.values)}")
+            self._memo["unused"] = out
         return out
 
     @property
@@ -185,11 +299,23 @@ class Workspace:
 
     @property
     def history(self) -> tuple:
-        return tuple(s.token for s in self.steps)
+        h = self._memo.get("history")
+        if h is None:
+            h = self._memo["history"] = tuple(s.token for s in self.steps)
+        return h
 
     # -- doing things ------------------------------------------------------
     def run(self, step: Step) -> Optional[Fraction]:
-        op = OPS.get(step.op)
+        memo = self._memo.get("run")
+        if memo is None:
+            memo = self._memo["run"] = {}
+        key = (step.op, step.args)
+        if key not in memo:
+            memo[key] = self._run(step)
+        return memo[key]
+
+    def _run(self, step: Step) -> Optional[Fraction]:
+        op = op_info(step.op)
         if op is None or len(step.args) != len(op.sig) or len(set(step.args)) != len(step.args):
             return None
         vals = []
@@ -198,7 +324,7 @@ class Workspace:
             if f is None or f.kind not in kinds:
                 return None
             vals.append(f.value)
-        return execute(step.op, vals)
+        return run_op(step.op, vals)
 
     def apply(self, step: Step, value: Fraction) -> "Workspace":
         used = self.used | {a for a in step.args if a[0] in "NLQFCXS"}
@@ -229,27 +355,49 @@ class Workspace:
     def bindings(self, op_name: str) -> list:
         """Every type-correct way to apply an operation here (canonical order
         for commutative operations, no fact used twice in one step)."""
-        op = OPS[op_name]
+        key = ("bind", op_name)
+        if key not in self._memo:
+            self._memo[key] = self._bindings(op_name)
+        return self._memo[key]
+
+    def _bindings(self, op_name: str) -> list:
+        op = op_info(op_name)
         pools = [self.of_kind(kinds) for kinds in op.sig]
         out = []
         if len(pools) == 1:
             return [(f.ref,) for f in pools[0]]
-        for a in pools[0]:
-            for b in pools[1]:
-                if a.ref == b.ref:
-                    continue
-                if op.comm and a.kind != CONST and b.kind != CONST and ref_key(b.ref) < ref_key(a.ref):
-                    continue
-                out.append((a.ref, b.ref))
+        if len(pools) == 2:
+            for a in pools[0]:
+                for b in pools[1]:
+                    if a.ref == b.ref:
+                        continue
+                    if op.comm and a.kind != CONST and b.kind != CONST and ref_key(b.ref) < ref_key(a.ref):
+                        continue
+                    out.append((a.ref, b.ref))
+            return out
+        for combo in itertools.product(*pools):  # invented procedures can take more
+            refs = tuple(f.ref for f in combo)
+            if len(set(refs)) == len(refs):
+                out.append(refs)
         return out
 
 
 def _question_facts(r: Reading) -> dict:
     """The question's notation as facts, each tied to its place in the skeleton."""
-    marks = {"#": [], "<list>": [], "<eq>": [], "<fdef>": [], "<call>": [], "<expr>": [], "<poly>": []}
+    marks = {"#": [], "<list>": [], "<eq>": [], "<fdef>": [], "<call>": [], "<expr>": [], "<poly>": [], "<some>": []}
     for i, t in enumerate(r.skeleton):
         if t in marks:
             marks[t].append(i)
+    # numbers and vague quantities ("a few") are both quantities, numbered in order
+    quantities, nums, vague = [], iter(r.nums), iter(getattr(r, "vague", ()))
+    texts_in = getattr(r, "texts", {}) or {}
+    n_seen = 0
+    for i in sorted(marks["#"] + marks["<some>"]):
+        if r.skeleton[i] == "#":
+            quantities.append((next(nums), i, texts_in.get(("N", n_seen), "")))
+            n_seen += 1
+        else:
+            quantities.append((UNKNOWABLE, i, next(vague, "some")))
     xpos = sorted(marks["<expr>"] + marks["<poly>"])
 
     def at(lst, i):
@@ -257,7 +405,9 @@ def _question_facts(r: Reading) -> dict:
 
     texts = getattr(r, "texts", {}) or {}
     facts = {}
-    for key, kind, values, pos in (("N", NUM, r.nums, marks["#"]), ("L", LIST, r.lists, marks["<list>"]),
+    for i, (v, p, text) in enumerate(quantities):
+        facts[f"N{i + 1}"] = Fact(f"N{i + 1}", NUM, v, p, text, (p,))
+    for key, kind, values, pos in (("L", LIST, r.lists, marks["<list>"]),
                                    ("Q", EQ, r.eqs, marks["<eq>"]), ("F", FDEF, r.fdefs, marks["<fdef>"]),
                                    ("C", CALL, r.calls, marks["<call>"]), ("X", None, r.exprs, xpos)):
         for i, v in enumerate(values):
@@ -302,10 +452,23 @@ def steps_to_program(steps):
             return ("K", int(ref[1:]))
         return (ref[0], int(ref[1:]) - 1)
 
+    def inline(p, args):  # an invented procedure, written out in the operations it's made of
+        if p[0] == "$":
+            return args[p[1]]
+        if p[0] == "K":
+            return p
+        inner = [inline(a, args) for a in p[1:]]
+        if p[0] in OPS and OPS[p[0]].comm:
+            inner.sort(key=repr)
+        return (p[0], *inner)
+
     for s in steps:
-        if s.op == STOP:
+        if s.op in TERMINAL:
             continue
         args = [leaf(a) for a in s.args]
+        if s.op in PROCS:
+            built.append(inline(PROCS[s.op].body, args))
+            continue
         if s.op in OPS and OPS[s.op].comm:
             args.sort(key=repr)
         built.append((s.op, *args))
@@ -327,6 +490,8 @@ def canonical_program(prog):
 def fmt(v) -> str:
     if v is None:
         return "?"
+    if v is UNKNOWABLE:
+        return "not enough information"
     v = Fraction(v)
     if v.denominator == 1:
         return str(v.numerator)
@@ -357,11 +522,19 @@ SYMBOL = {"add": "+", "sub": "−", "mul": "×", "div": "÷", "pow": "^"}
 def say(ws: Workspace, step: Step, value=None) -> str:
     """A step as a line of a worked solution, e.g. '5 × 6 = 30'."""
     if step.op == STOP:
+        if ws.answer is UNKNOWABLE:
+            return "the answer depends on a quantity the question doesn't give: not enough information"
         return f"the answer is {fmt(ws.answer)}"
-    v = fmt(value if value is not None else ws.run(step))
+    if step.op == INSUFFICIENT:
+        return "the question doesn't give enough information to answer it"
+    val = value if value is not None else ws.run(step)
+    v = "unknown" if val is UNKNOWABLE else fmt(val)
     f = [ws.fact(a) for a in step.args]
-    x = [fmt(a.value) if a is not None and a.kind in (NUM, CONST) else "?" for a in f]
+    x = [((f"[{a.text}]" if a.text else "?") if a.value is UNKNOWABLE else fmt(a.value)) if a is not None and a.kind in (NUM, CONST)
+         else "?" for a in f]
     op = step.op
+    if op in PROCS:
+        return f"{op}({', '.join(x)}) = {v}  (invented: {PROCS[op].describe()})"
     if op in SYMBOL:
         return f"{x[0]} {SYMBOL[op]} {x[1]} = {v}"
     if op == "mod":

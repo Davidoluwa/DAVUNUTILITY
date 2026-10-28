@@ -14,13 +14,16 @@ from collections import Counter
 from ..maths.trace import readable as _maths_readable
 from .experts import NeuralExpert, OperatorExpert
 from .exam import exam_tasks, train_curriculum_only
-from .workspace import STOP, fmt, say
+from .room import verdict as _verdict
+from .workspace import STOP, UNKNOWABLE, fmt, say
 from .world import RoomScenario, RoomWorld, SPLITS
 
 
 def _f(v):
     if v is None:
         return None
+    if v is UNKNOWABLE:
+        return "not enough information"
     v = float(v)
     return None if v != v or math.isinf(v) else round(v, 6)
 
@@ -66,6 +69,11 @@ def readable(feature: str) -> str:
         return f"leaves {p[1]} question facts unused"
     if k == "uses-last":
         return "builds on the last result" if p[1] == "1" else "ignores the last result"
+    if k == "cant":
+        return "saying there isn't enough information"
+    if k.startswith("cant"):
+        return feature.replace("cant|", "not enough information, ").replace("open:", "facts unused: ") \
+            .replace("t:", "after step ").replace("facts:", "what the question gives: ")
     if k.startswith("stop"):
         return feature.replace("stop|", "stopping, ").replace("open:", "facts still unused: ").replace("t:", "after step ")
     if k.startswith("null"):
@@ -74,11 +82,10 @@ def readable(feature: str) -> str:
 
 
 def case(room, task, res, source: str) -> dict:
-    known = task.target is not None
-    verdict = None
-    if known:
-        verdict = "abstain" if res.answer is None else ("right" if task.is_correct(float(res.answer)) else "wrong")
-    out = {"question": task.question, "source": source, "family": task.family or "", "answer": _f(task.target),
+    known = task.target is not None or not getattr(task, "answerable", True)
+    verdict = _verdict(task, res.answer) if known else None
+    truth = task.target if getattr(task, "answerable", True) else UNKNOWABLE
+    out = {"question": task.question, "source": source, "family": task.family or "", "answer": _f(truth),
            "verdict": verdict, "given": _f(res.answer), "probability": round(res.probability, 3),
            "compute": round(res.cost, 1),
            "alternatives": [{"value": _f(v), "p": round(p, 3), "routes": n} for v, p, n in res.answers[:4]],
@@ -94,7 +101,7 @@ def case(room, task, res, source: str) -> dict:
         for i in shown:
             c = m.cands[i]
             cands.append({
-                "token": c.token, "text": say(m.ws, c.step, c.value), "value": _f(c.value), "stop": c.step.op == STOP,
+                "token": c.token, "text": say(m.ws, c.step, c.value), "value": _f(c.value), "stop": c.step.op == STOP, "cant": c.step.op == "insufficient",
                 "gate": round(m.gates[i + 1], 3), "chosen": i == k,
                 "backers": [{"name": p.expert, "kind": kind_of(room, p.expert), "confidence": round(p.confidence, 2),
                              "note": p.note} for p in sorted(c.props, key=lambda p: -p.confidence)],

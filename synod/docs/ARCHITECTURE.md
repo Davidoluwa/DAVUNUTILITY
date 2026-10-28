@@ -213,17 +213,17 @@ The council above answers a question in one go. The room works a problem out: a 
 
 ### 10.1 The workspace (`workspace.py`)
 
-A question's notation becomes **facts**: numbers `N1, N2, …`, lists `L`, equations `Q`, function definitions `F`, calls `C`, expressions `X`, plus small constants `K2 … K1000`. A **step** applies one of 28 exact operations to facts already on the table and adds the result as `S1, S2, …` (`sub(N2,S1)`, `solve(Q1)`, `round(N1,N2)`, `div(S2,K100)`). Facts are referred to by role, not value, so a step means the same thing in every question with that shape. Every fact remembers **where in the question it is talked about**: a number by its position; a result by the places its inputs came from; the result of solving an equation by every mention of its variable ("Is *t* a prime number?"); `f(3)` by the call. A worked solution is a list of steps ending in `answer`; `say()` turns each into a line like `6 × 5 = 30`.
+A question's notation becomes **facts**: numbers `N1, N2, …` (including vague quantities like "a few", which have an unknown value), lists `L`, equations `Q`, function definitions `F`, calls `C`, expressions `X`, plus small constants `K2 … K1000`. A **step** applies one of 28 exact operations to facts already on the table and adds the result as `S1, S2, …` (`sub(N2,S1)`, `solve(Q1)`, `round(N1,N2)`, `div(S2,K100)`). Facts are referred to by role, not value, so a step means the same thing in every question with that shape. Every fact remembers **where in the question it is talked about**: a number by its position; a result by the places its inputs came from; the result of solving an equation by every mention of its variable ("Is *t* a prime number?"); `f(3)` by the call. A worked solution is a list of steps ending in `answer`; `say()` turns each into a line like `6 × 5 = 30`.
 
 ### 10.2 The curriculum (`world.py`)
 
 75 kinds of question needing one to four steps: the single-step types from the maths world plus rounding, cubes, halves and doubles, absolute values; percentages, percentage increase and decrease, averages of two numbers, ranges, areas and perimeters, speed and distance; word problems that chain two or three steps (buying packs and giving some away, sharing, making change); compositions. Each kind is defined by its **reference program over the template's blanks** (e.g. `sub(add(a, mul(b, c)), d)`); the world grounds the blanks in the question's notation and computes the answer by running it. The program is kept on the task for evaluation only (`Task.solution`, never in the view): the room only ever sees answers, on half the training questions.
 
-Test sets: `seen`, `paraphrase` (held-out phrasings), `big` (numbers ×100), `story` (held-out word-problem templates, names and objects, 1-3 steps), `compose` (two- and three-step combinations never seen together), `longer` (four steps, longer than anything in training).
+Test sets: `seen`, `paraphrase` (held-out phrasings), `big` (numbers ×100), `story` (held-out word-problem templates, names and objects, 1-3 steps), `compose` (two- and three-step combinations never seen together), `longer` (four steps, longer than anything in training), `distract` (word problems with one or two held-out sentences that don't matter) and `missing` (word problems missing a number they need, from kinds of question never incomplete in training). See 10.9.
 
 ### 10.3 The population (`experts.py`)
 
-One bench of 42:
+One bench of 43 (more once it invents procedures, 10.10):
 
 | expert | kind | what it knows | what it learns |
 |---|---|---|---|
@@ -235,22 +235,24 @@ One bench of 42:
 | checker | symbolic | whole-number, yes/no and sign checks | how reliable each check is per kind of question |
 | estimator | neural | nothing | the size of the answer (as in the maths world) |
 | lexicon | symbolic | nothing | which words go with which operations (P(op∣word)·PMI over worked solutions); reports which words a step accounts for and which strongly operational words a finished solution leaves unexplained |
+| relevance | symbolic | nothing | which numbers in a question matter (from which ones worked solutions used); reports when a step uses a number that doesn't and when stopping would leave one that does (10.9) |
 
 Every expert keeps a self-model (`Competence`) of how often its proposals, given its evidence, were the step the solution needed.
 
 ### 10.4 One step of deliberation (`room.py`)
 
-1. **Everyone volunteers.** Every step expert proposes at most one next step (or `answer`). Operators speak as a group: each one's readiness is read **relative to all operators' readiness** (its share, a softmax over experts), because on unfamiliar ground the right operator is often only mildly ready but far more ready than the rest. Evidence: share, binding probability and raw readiness buckets; confidence from the self-model.
+1. **Everyone volunteers.** Every step expert proposes at most one next step (or `answer`, or `insufficient`: "the question doesn't give enough"). Operators speak as a group: each one's readiness is read **relative to all operators' readiness** (its share, a softmax over experts), because on unfamiliar ground the right operator is often only mildly ready but far more ready than the rest. Evidence: share, binding probability and raw readiness buckets; confidence from the self-model. An operator with under 1% of the share stays quiet (the neural experts can still call on it to bind).
 2. **Proposals pool** into candidates; reviewers report signals on each candidate's result.
-3. **The judge** (a `SparseLogLinear` gate over candidates plus "none of these") reads, per candidate: who backs it and how sure each is (per expert, per confidence bucket, per evidence, and per expert × whether this wording is familiar to the room); how many neural and symbolic backers; the surest and mean backer confidence; reviewer signals; structure (how many unused facts it uses, how many it leaves, whether it builds on the last result; for `answer`: how many question facts are still unused, the step count, the previous operation).
+3. **The judge** (a `SparseLogLinear` gate over candidates plus "none of these") reads, per candidate: who backs it and how sure each is (per expert, per confidence bucket, per evidence, and per expert × whether this wording is familiar to the room); how many neural and symbolic backers; the surest and mean backer confidence; reviewer signals; structure (how many unused facts it uses, how many it leaves, whether it builds on the last result; for `answer`: how many question facts are still unused; for `insufficient`: the step, the unused facts and the shape of what the question gives). `insufficient` is always on the table, backed or not.
 4. **Beam search.** The three most probable partial solutions stay open. A route's probability is the product of its step probabilities; routes reaching the same answer **pool**. Deliver the most probable answer if it reaches 0.5.
 
 ### 10.5 Learning together
 
 On a question whose answer is revealed, the room needs a worked solution to learn from:
 
-- its own best route, if it reached the answer and used every fact in the question;
-- otherwise a **search guided by its own experts and judge** (beam of 6 over every operator's three best bindings), falling back on exhaustive search of short programs (`maths/programs.explain`). Solutions that use every fact are preferred, then shorter ones.
+- its own best route, if it reached the answer;
+- otherwise the route its own experts and judge find **most likely among those that reach the answer** (beam of 6 over every operator's three best bindings, stopping once nothing open can beat the best found), falling back on exhaustive search of short programs (`maths/programs.explain`), fewest steps first. Nothing rewards using every number (10.9).
+- if the truth is "not enough information": its own route if it concluded that, else `insufficient` at the first step.
 
 That solution is **broadcast**. At every step of it: the judge takes one gradient step towards the step the solution took (or "none" if nobody proposed it), with each proposal **dropped with probability 0.3**, so the judge learns what each expert's word is worth alone rather than leaning on the crowd. Every expert settles its self-model. Then every expert learns its part (operators: fire or not, and the binding; neural pool: the operation, weighted by responsibility; memory and analogy: the solution; goal: finished or not; reviewers: their reliabilities, the lexicon, the size). Unlabeled questions the room is ≥ 0.9 sure of are broadcast to the members too (not the judge or the self-models).
 
@@ -264,7 +266,8 @@ It does what stacking promises (the judge learns that pattern-copying experts ar
 
 | idea | result |
 |---|---|
-| judge priors on step order (`op × step number`, `op × previous op`) | don't transfer to new combinations; removed from the judge (operators keep them) |
+| judge priors on step order (`op × step number`, `op × previous op`) | don't transfer to new combinations; removed from the judge (operators keep them). The same habits on `answer` ("stop after a subtraction") went too, once relevance could say when to stop: four-step problems went from 0% to 7% over 3 seeds, the rest unchanged |
+| preferring worked solutions that use every number | wrong as soon as a question has a number that doesn't matter; replaced by the most likely route that reaches the answer (10.9) |
 | operators reading absolute positions ("the first number") | removed; binding by the words around a fact transfers to new layouts |
 | neural experts predicting whole steps with positional arguments (`sub(N3,S1)`) | learned "subtract from the third number" and broke on longer problems; now they predict the operation and the operator binds |
 | summing backers' confidence | let eight correlated neural votes swamp everything; replaced by surest and mean confidence |
@@ -277,14 +280,63 @@ It does what stacking promises (the judge learns that pattern-copying experts ar
 
 Whole kinds of question flip together between seeds: every question of a new combination shares the same features, so a small difference in learned weights moves all of them at once across the judge's decision boundary. With the same data and different random initialisation, the room scored 19-56% on new combinations and 0-44% on four-step problems. Most of the variance is learning-dynamics, not data; the report averages several seeds and shows the range.
 
-### 10.9 Where it stands (4 seeds, `results/ROOM_REPORT.md`)
+### 10.9 Relevance and missing information
 
-Right answers (wrong): familiar 98% (2%), new wording 75% (13%), numbers ×100 97% (2%), word problems 57% (12%), new combinations 39% (27%), four steps 14% (22%). The question→answer council of section 3, trained on the same curriculum: 87%, 54%, 97%, 64% (30% wrong), 8% (43% wrong), 0%. Exam: 34/40 vs 31/40.
+The first version of the room had "use every number" baked in twice: the search that finds worked solutions preferred chains that used every fact, and the judge learned that stopping with an unused number was bad (−1.3), because in that curriculum every number always mattered. Same habit, wrong world, as soon as a question says "It is 25 degrees outside."
+
+**The curriculum.** A quarter of the training word problems carry a sentence that doesn't matter: some with a number ("The bus ride takes 12 minutes."), some vague ("A few friends are watching."). Some training questions leave out a number they need: "Ali buys *some* packs with 4 pens in each pack." Only half of the kinds of word problem are ever incomplete in training (`INCOMPLETE_TRAIN`); the `missing` test set uses the other half, with held-out wordings. The `distract` test set uses held-out asides (one or two), held-out templates and names. Small numbers in word problems are sometimes written as words.
+
+**Reading.** The reader turns number words into numbers ("twenty-five", "two hundred"; a lone "one" stays a word, since in English it's as often a pronoun). Vague quantities ("some", "several", "a few") become **facts with an unknown value**, numbered alongside the numbers, and anything computed from an unknown is unknown. The reader also records which sentence each word is in.
+
+**"Not enough information" is an outcome of its own**, separate from abstaining ("I'm not sure"). It arises two ways, both learned:
+
+- *By working the problem.* The room solves "buys a few packs with 4 pens in each" exactly as it would with a number, and the answer comes out unknown. A vague aside ("a few friends are watching") is just a fact that doesn't matter, like a number that doesn't. So the same machinery that learns relevance also learns when missing information matters.
+- *By saying so.* `insufficient` is always on the table as a candidate. Neural experts, memory and analogy can propose it; the judge reads who backs it, the step number, how many facts are unused and the shape of what the question gives.
+
+On an answered question whose truth is "not enough information", the worked solution is the room's own route if it concluded that, else `insufficient` at the first step. On an answerable question, saying "not enough information" counts as wrong.
+
+**Finding worked solutions without "use everything".** The search now returns the route the room itself finds **most likely among those that reach the revealed answer** (a beam search scored by the judge's own step probabilities). A route only gets less likely as it grows, so once the best route found beats every route still open, nothing can overtake it and the search stops. Short, plausible chains win; nothing rewards touching every number. This is also what made the search several times cheaper. The room's own route is accepted whenever it reaches the answer.
+
+**The relevance reviewer** learns which numbers matter from which ones worked solutions used: P(used | the words around the number, the words of its sentence, how much its sentence shares with the question being asked, rare words counting most). It learned, for example, that a number in the question sentence matters (+2.3), that one whose sentence shares nothing with the question mostly doesn't (−1.7), and that "years old", "watching" and "degrees" go with numbers that don't matter (−1.0 to −1.5). It tells the judge how much the numbers a step uses matter (the judge learned −2.6 for a step using one it's sure doesn't, −1.2 when unsure) and, on `answer`, how many numbers that matter are still unused and how much the most relevant one does.
+
+Tried and cut:
+
+| idea | result |
+|---|---|
+| vague words as plain words, with `insufficient` the only way to say it | the neural experts and the lexicon learned "few" → missing; "A few people are waiting nearby" then made answerable questions "not enough information" (27% of one seed's word problems) |
+| operators reading the relevance reviewer's estimate when binding | new combinations fell from 39% to ~24%: on unfamiliar ground the estimate is noise and binding leaned on it |
+| a judge feature for the shape of what the question gives, on `insufficient` | kept: it's how the judge can learn "only one number, but the question needs two" |
+
+### 10.10 Inventing procedures (`procedures.py`)
+
+Worked solutions are chains, and chains recur: "× then ÷100" is "percent of"; "a + b×c" is buying packs. The room can make such a piece into a new operation of its own, with its own expert, and keeps it only if it earns its place. Nothing knows any procedure in advance.
+
+1. **Notice.** The room keeps a notebook of its last 3000 confirmed worked solutions. Every connected piece of two or three steps is abstracted: the facts it reads become parameters (the same fact twice is the same parameter), constants stay inside, commutative arguments are put in a fixed order. A piece's worth is the steps it would save over the notebook (as in DreamCoder's library learning: the best abstraction shortens the corpus most), counted only if it appears in at least five different wordings. Pieces are counted in the room's current vocabulary, so a procedure can be built from procedures.
+2. **Sleep.** Every 1000 practice questions the room replays 300 notebook solutions and learns from them again (judge, experts, self-models, reviewers).
+3. **Try.** If the notebook suggests a piece, a copy of the room adopts it: the procedure is registered as an operation that runs exactly like the operations it's made of; every bench gets an operator expert for it; every neural expert gets a new output for it; memory is rewritten to use it. The copy sleeps on the same solutions as the room, re-expressed with the procedure, so the two differ only in that one word. From then on the copy re-expresses every solution it learns from in its current vocabulary (with the procedure wherever it fits), so it actually switches to the new word instead of reinforcing the old chain.
+4. **Keep it only if it helps.** Both rooms meet the next 500 questions, at the same beam width, before either learns from them. The copy replaces the room only if it was **less surprised by the worked solutions** of those questions (total −log P of each solution under the room before learning it: prequential description length; a room that finds the right solutions more likely needs a smaller search to find them), actually used the procedure, and lost no more answers than it won. Right/wrong counts alone can't decide: a procedure is relevant to only a few percent of questions, so a trial sees 5-20 relevant questions; surprise uses every answered question.
+
+Method checks see through procedures: `steps_to_program` writes them out in the operations they're made of, so "right for the right reason" compares like with like.
+
+### 10.11 Speed
+
+Runs are about twice as fast as before this round, with more going on:
+
+- **Memoised workspaces.** A workspace never changes, so its fact table, bindings, unused facts, history, the result of running a step, and pair features are computed once. Per-question caches hold every expert's view of a state.
+- **Factored binding scores.** The binding model is linear with separate features per argument position, so a binding's score is the sum of its arguments' scores plus a pair score; each fact is scored once per position, not once per pairing. Sums run as `map` over cached feature-name lists instead of generator loops.
+- **The answer search stops as soon as nothing can beat the best route found**, instead of exploring to full depth until some chain used every number.
+- **Quiet operators.** An operator whose readiness is under 1% of the operators' total doesn't score its bindings (the neural experts can still call on it); while searching for a worked solution everyone speaks.
+- Checked with a behaviour fingerprint (an md5 of every answer and probability) that stayed identical through the pure optimisations.
+
+### 10.12 Where it stands (3 seeds, `results/ROOM_REPORT.md`)
+
+Right answers (wrong): familiar 95% (4%), new wording 70% (20%), numbers ×100 98% (2%), word problems 54% (25%), new combinations 33% (48%), four steps 1% (62%), distractors 22% (24%), missing information 78% (6%). Without inventing: 95, 72, 97, 53, 36, 8, 19, 70. The question→answer council on the same curriculum: 89, 41, 96, 64, 0, 0, 16, 0 (it can't say "not enough information"; 49% wrong there). The same deliberation with nothing learned: 0 everywhere. Exam: 32/40 (7 wrong) vs the council's 27/40 (0 wrong, 13 abstained).
 
 Limitations and next steps:
 
-- **The neural pool didn't specialise.** Responsibility-weighted training (`h_i ∝ p_i`) left every network backing almost every kind of question (≈ 5.9 bits of 6.2). Mixture-of-experts layers usually need hard top-k routing plus a load-balancing term to break the symmetry; that's the next thing to try, with each network's view made more distinct.
-- **Pattern-copying hurts new combinations.** Operators alone get 53% there, the full room 39%. The judge's trust in the neural pool, memory and analogy was earned on training data where familiar frames were always right. Cross-fitting fixes the trust but makes the room too timid on new phrasings, where those same experts are right. What's missing is a signal that separates "a new way of saying a known problem" from "a new problem".
-- **Long chains.** A route's probability is the product of its steps, so four-step answers rarely reach 0.5 even when the steps are right (the right method is often on the table and still abstained on).
-- **Compute.** Every expert volunteers at every step and three routes stay open: about 77 units of compute per question, many times what the question→answer council spends. Routing who gets to speak (as the council's router does) is the obvious saving.
-- **Variance.** Whole kinds of question flip between runs; single runs mislead.
+- **Distractors.** 22% right, mostly abstaining. Held-out asides ("The room has 29 windows.") share no words with anything seen; the relevance reviewer's estimate for their numbers is often "unsure", and binding still picks them. Letting the operators read relevance when binding was tried and hurt new combinations (10.9). What's missing is a better sense of what a sentence is *about* (does it talk about the thing being asked for?), not more word statistics.
+- **Four-step problems.** 14% in the first room, 1-10% now. That room reached them through the "use every number" habit; this one has to learn when to stop from relevance, and on problems longer than any it has seen it still trusts the neural experts' confident "finished" over the reviewer's "a number that matters is unused".
+- **Invention doesn't pay yet.** Each seed kept one or two procedures and uses them, but against the same room that never invents the differences are within seed noise (−6 to +8 points). Trials see 5-20 relevant questions each; the obvious next step is to test a procedure on the questions it fits (replaying notebook wordings with new numbers) rather than on whatever comes next, and to try it where depth is the bottleneck.
+- **Pattern-copying still hurts new combinations.** Operators alone get 44% there, the full room 33%. The judge's trust in the neural pool, memory and analogy was earned where familiar frames were always right.
+- **The neural pool didn't specialise** (≈ 5.7 bits of 6.2): responsibility-weighted training needs hard routing plus load balancing to break the symmetry.
+- **Variance.** Whole kinds of question flip between runs (new combinations 26-44%, four steps 0-22% across seeds of one variant); read the averages.

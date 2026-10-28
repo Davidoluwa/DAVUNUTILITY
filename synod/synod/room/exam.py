@@ -2,11 +2,12 @@
 from __future__ import annotations
 
 from collections import Counter
+from dataclasses import replace
 
 from ..maths.exam import EXAM
 from ..maths.mathlang import context, features, read
 from ..protocol import Task
-from .room import make_room
+from .room import make_room, verdict
 from .transcript import render
 from .world import RoomScenario, RoomWorld
 
@@ -32,7 +33,7 @@ def sit(room, verbose=False):
     rows = []
     for topic, phrasing, task in exam_tasks():
         res = room.handle(task)
-        v = "abstain" if res.answer is None else ("right" if task.is_correct(float(res.answer)) else "wrong")
+        v = verdict(task, res.answer)
         rows.append({"topic": topic, "phrasing": phrasing, "question": task.question, "verdict": v, "res": res,
                      "task": task})
         if verbose:
@@ -56,7 +57,8 @@ def sit_council(seed: int = 0) -> tuple:
     from ..maths.experiment import make_nodes
     council = Council(make_nodes(seed))
     for task in RoomWorld(RoomScenario(seed=seed, n_per_test_split=0)).train_stream():
-        council.handle(task)
+        # it can only answer with a number, so an incomplete question can't teach it anything
+        council.handle(task if task.answerable else replace(task, labeled=False))
     council.config.learn = False
     council.config.exchange = False
     rows = []

@@ -68,6 +68,7 @@ def main(argv=None):
     sub.add_parser("chat")
     rp = sub.add_parser("report")
     rp.add_argument("--seeds", type=int, default=3)
+    rp.add_argument("--reuse", action="store_true", help="reuse the last comparison runs (results/room_compare.pkl)")
     sub.add_parser("exam")
     sub.add_parser("trace")
     args = ap.parse_args(argv)
@@ -90,14 +91,21 @@ def main(argv=None):
                 break
             print(ask(room, q))
     elif args.cmd == "report":
-        from .exam import sit_council, sit_room, train_curriculum_only
+        from .exam import sit_council, sit_room
         from .report import compare, write
         from .trace import build_viewer, export
         seeds = list(range(args.seeds))
-        table, extras = compare(seeds)
-        room = train_curriculum_only(0)
+        saved = os.path.join("results", "room_compare.pkl")
+        if args.reuse and os.path.exists(saved) and os.path.exists(MODEL):
+            with open(saved, "rb") as fh:
+                table, extras, seeds = pickle.load(fh)
+        else:
+            table, extras = compare(seeds, keep_room=MODEL)  # the seed-0 room is saved as the model
+            with open(saved, "wb") as fh:
+                pickle.dump((table, extras, seeds), fh)
+        with open(MODEL, "rb") as fh:
+            room = pickle.load(fh)
         exam = {**sit_room(room=room), "council v2 (question -> answer)": sit_council()}
-        save(room)
         path = os.path.join("results", "ROOM_REPORT.md")
         write(table, extras, seeds, path, exam)
         print(f"report written to {path}; viewer -> {build_viewer(export(room=room))}")

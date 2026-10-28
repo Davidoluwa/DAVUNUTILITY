@@ -199,6 +199,8 @@ class Reading:
     exprs: list = field(default_factory=list)  # Poly
     words: tuple = ()
     texts: dict = field(default_factory=dict)  # (slot kind, index) -> the notation as written
+    sentences: tuple = ()  # which sentence each skeleton token is in
+    vague: list = field(default_factory=list)  # how each vague quantity was written ("a few")
 
     @property
     def slots(self) -> str:
@@ -216,8 +218,69 @@ class Reading:
         return out
 
 
+_SMALL = {w: i for i, w in enumerate("zero one two three four five six seven eight nine ten eleven twelve thirteen "
+                                       "fourteen fifteen sixteen seventeen eighteen nineteen".split())}
+_TENS = {w: 10 * i for i, w in enumerate("twenty thirty forty fifty sixty seventy eighty ninety".split(), 2)}
+_SCALE = {"hundred": 100, "thousand": 1000}
+VAGUE_TOKEN = "~vague"  # a quantity named but not given ("some", "several", "a few")
+
+
+def _numeral(words) -> Optional[int]:
+    """The value of a run of number words ("twenty five", "two hundred"), or None."""
+    total = cur = 0
+    seen = False
+    for w in words:
+        if w in _SMALL:
+            cur += _SMALL[w]
+        elif w in _TENS:
+            cur += _TENS[w]
+        elif w in _SCALE and seen:
+            if w == "hundred":
+                cur *= 100
+            else:
+                total, cur = total + cur * 1000, 0
+        else:
+            return None
+        seen = True
+    return total + cur if seen else None
+
+
 def _spans(text):
-    return [(m.group(), m.start(), m.end()) for m in TOKEN.finditer(text)]
+    """Tokens with their places in the text. Numbers written as words become
+    numerals (keeping their place, so the notation as written is still
+    "three"). A lone "one" is left alone: in English it is as often a pronoun
+    ("each one") as a number."""
+    raw = [(m.group(), m.start(), m.end()) for m in TOKEN.finditer(text)]
+    out, i = [], 0
+    while i < len(raw):
+        w = raw[i][0].lower()
+        if w in ("some", "several"):
+            out.append((VAGUE_TOKEN, raw[i][1], raw[i][2]))
+            i += 1
+            continue
+        if w == "a" and i + 1 < len(raw) and raw[i + 1][0].lower() == "few":
+            out.append((VAGUE_TOKEN, raw[i][1], raw[i + 1][2]))
+            i += 2
+            continue
+        j, words = i, []
+        while j < len(raw):
+            w = raw[j][0].lower()
+            if w in _SMALL or w in _TENS or (w in _SCALE and words):
+                words.append(w)
+                j += 1
+            elif w == "-" and words and words[-1] in _TENS and j + 1 < len(raw) and raw[j + 1][0].lower() in _SMALL \
+                    and raw[j][1] == raw[j - 1][2] and raw[j + 1][1] == raw[j][2]:
+                j += 1  # "twenty-five"
+            else:
+                break
+        v = _numeral(words) if words else None
+        if v is not None and words != ["one"]:
+            out.append((str(v), raw[i][1], raw[j - 1][2]))
+            i = j
+        else:
+            out.append(raw[i])
+            i += 1
+    return out
 
 
 def read(text: str) -> Reading:
@@ -357,12 +420,19 @@ def read(text: str) -> Reading:
             continue
         placeholder[s[0]] = "<?>"
 
-    skel, words = [], []
-    for i, (t, _, _) in enumerate(toks):
+    skel, words, sent = [], [], []
+    k = 0
+    for i, (t, a, b) in enumerate(toks):
+        if t in ".?!" and i not in covered:
+            k += 1
+            continue
         if i in placeholder:
             skel.append(placeholder[i])
         elif i in covered:
             continue
+        elif t == VAGUE_TOKEN:
+            skel.append("<some>")
+            r.vague.append(text[a:b])
         elif t.isalpha():
             w = t.lower()
             if len(t) == 1 and t in var_names:
@@ -372,8 +442,12 @@ def read(text: str) -> Reading:
             skel.append(w)
             if not w.startswith("<"):
                 words.append(w)
+        else:
+            continue
+        sent.append(k)
     r.skeleton = tuple(skel)
     r.words = tuple(words)
+    r.sentences = tuple(sent)
     return r
 
 

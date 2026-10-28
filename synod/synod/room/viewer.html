@@ -185,11 +185,12 @@ details.help p { margin-top: 8px; color: var(--muted); }
     checker: { label: "checker", color: "var(--review)", shape: "symbolic" },
     estimator: { label: "estimator", color: "var(--review)", shape: "neural" },
     lexicon: { label: "lexicon", color: "var(--review)", shape: "symbolic" },
+    relevance: { label: "relevance", color: "var(--review)", shape: "symbolic" },
   };
   const kindOf = (k) => KIND[k] || { label: k, color: "var(--muted)", shape: "symbolic" };
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-  const num = (v) => (v === null || v === undefined) ? "—" : (Math.abs(v - Math.round(v)) < 1e-9 ? String(Math.round(v)) : (+v.toPrecision(6)).toString());
+  const num = (v) => (v === null || v === undefined) ? "—" : typeof v === "string" ? v : (Math.abs(v - Math.round(v)) < 1e-9 ? String(Math.round(v)) : (+v.toPrecision(6)).toString());
   const pct = (p) => `${Math.round(p * 100)}%`;
   const glyph = (k) => `<i class="glyph ${kindOf(k).shape}" style="--c:${kindOf(k).color}"></i>`;
 
@@ -204,7 +205,7 @@ details.help p { margin-top: 8px; color: var(--muted); }
   const groups = {};
   DATA.bench.forEach((e) => { (groups[e.kind] = groups[e.kind] || []).push(e); });
   const ROLE = {
-    operator: "Symbolic. One per exact operation. Each learned when it's the right next move and which facts to apply it to.",
+    operator: "Symbolic. One per exact operation, plus one per procedure the room invented and kept. Each learned when it's the right next move and which facts to apply it to.",
     neural: "Small networks that read the question and the steps so far and predict the whole next step. Trained as a mixture of experts.",
     memory: "Recalls worked solutions of the exact same wording.",
     analogy: "Borrows the solution of the most similar wording it knows.",
@@ -212,6 +213,7 @@ details.help p { margin-top: 8px; color: var(--muted); }
     checker: "Whole-number, yes/no and sign checks, each with a learned reliability.",
     estimator: "Number sense: a learned guess of the answer's size.",
     lexicon: "Learned which words go with which operations; says what a step accounts for, and what a finished solution leaves out.",
+    relevance: "Learned which numbers in a question matter, from which ones worked solutions used; warns when stopping would leave one unused, or a step uses one that doesn't.",
   };
   $("#bench").innerHTML = Object.entries(groups).map(([k, list]) => `<div class="group">
       <div class="who">${glyph(k)}<b>${list.length > 1 ? list.length + " " : ""}${esc(kindOf(k).label)}${list.length > 1 ? " experts" : ""}</b><span class="mini">${esc(ROLE[k] || "")}</span></div>
@@ -254,15 +256,16 @@ details.help p { margin-top: 8px; color: var(--muted); }
     const ch = s.candidates.find((c) => c.chosen);
     const alts = s.candidates.filter((c) => !c.chosen);
     const lead = ch.backers[0] ? kindOf(ch.backers[0].kind).color : "var(--ink)";
-    return `<div class="step"><span class="num">${ch.stop ? "✓" : n}</span><div class="card${ch.stop ? " done" : ""}">
-      <div class="line1"><span class="big">${esc(ch.stop ? "Done: " + ch.text : ch.text)}</span><span class="token">${esc(ch.token)}</span></div>
+    const end = ch.stop || ch.cant;
+    return `<div class="step"><span class="num">${ch.stop ? "✓" : ch.cant ? "?" : n}</span><div class="card${end ? " done" : ""}">
+      <div class="line1"><span class="big">${esc(ch.stop ? "Done: " + ch.text : ch.cant ? "Stop: " + ch.text : ch.text)}</span><span class="token">${esc(ch.token)}</span></div>
       <div class="meterlabel"><span>judge ${ch.gate.toFixed(2)}${s.none >= 0.01 ? ` · none of these ${s.none.toFixed(2)}` : ""}</span><span>${s.on_table} candidate${s.on_table > 1 ? "s" : ""} on the table</span></div>
       ${meter(ch.gate, lead)}
       <span class="mini">backed by</span>${backers(ch.backers, 8)}
       ${ch.reviews.length ? `<div class="chips">${ch.reviews.map((r) => `<span class="chip ${tone(r)}">${esc(sigText(r))}</span>`).join("")}</div>` : ""}
       ${ch.reasons.length ? `<span class="mini">why the judge weighed it so</span>${reasons(ch.reasons)}` : ""}
       ${alts.length ? `<details class="alts"><summary>Also on the table (${alts.length} shown)</summary>${alts.map((a) => `<div class="alt">
-          <div class="line1"><span class="mono">${esc(a.stop ? "stop here" : a.text)}</span><span class="token">${esc(a.token)}</span><span class="mini">judge ${a.gate.toFixed(2)}</span></div>
+          <div class="line1"><span class="mono">${esc(a.stop ? "stop here" : a.cant ? "not enough information" : a.text)}</span><span class="token">${esc(a.token)}</span><span class="mini">judge ${a.gate.toFixed(2)}</span></div>
           ${backers(a.backers, 5)}
         </div>`).join("")}</details>` : ""}
     </div></div>`;
@@ -270,7 +273,7 @@ details.help p { margin-top: 8px; color: var(--muted); }
 
   function story(c) {
     if (!c.steps.length) return "Nobody in the room could make a first step.";
-    const ops = c.steps.filter((s) => !s.candidates.find((x) => x.chosen).stop).length;
+    const ops = c.steps.filter((s) => { const x = s.candidates.find((y) => y.chosen); return !x.stop && !x.cant; }).length;
     const kinds = new Set(); c.steps.forEach((s) => s.candidates.find((x) => x.chosen).backers.forEach((b) => kinds.add(kindOf(b.kind).label)));
     const bits = [`${ops} step${ops === 1 ? "" : "s"}, backed between them by ${[...kinds].join(", ")} experts.`];
     if (c.given !== null) bits.push(`It answered ${num(c.given)} with probability ${c.probability.toFixed(2)}${c.alternatives[0] && c.alternatives[0].routes > 1 ? ` (${c.alternatives[0].routes} routes reached it)` : ""}.`);
@@ -284,7 +287,7 @@ details.help p { margin-top: 8px; color: var(--muted); }
     const c = CASES[id - 1];
     const n = CASES.length;
     let k = 0;
-    const steps = c.steps.map((s) => stepCard(s, s.candidates.find((x) => x.chosen).stop ? 0 : ++k)).join("");
+    const steps = c.steps.map((s) => { const x = s.candidates.find((y) => y.chosen); return stepCard(s, x.stop || x.cant ? 0 : ++k); }).join("");
     const out = c.given !== null
       ? `<div class="outcome"><span class="ans">${num(c.given)}</span>${c.verdict ? `<span class="pill ${c.verdict}">${c.verdict}</span>` : ""}<span class="muted">probability ${c.probability.toFixed(2)}${c.answer !== null ? ` · answer key ${num(c.answer)}` : ""}</span></div>`
       : `<div class="outcome"><span class="ans">—</span><span class="pill abstain">abstained</span><span class="muted">${c.answer !== null ? `answer key ${num(c.answer)}` : ""}</span></div>`;

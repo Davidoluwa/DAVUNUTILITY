@@ -13,7 +13,7 @@ It runs in three settings:
 
 1. **Sequences**: "what comes next?" tasks with faults and distribution shift injected on purpose. This world shows the self-organisation and self-healing.
 2. **Maths**: the council learns what maths questions *mean* purely from answered examples, then answers new ones, including wordings, word problems and combinations it has never seen.
-3. **The room**: a much larger council (42 small experts) that works maths problems out **step by step**, with a deliberation behind every step, on a denser curriculum of one- to four-step problems. Every expert volunteers at every step; they all learn in the same room from the worked solutions the room discovers itself.
+3. **The room**: a much larger council (43 small experts) that works maths problems out **step by step**, with a deliberation behind every step, on a denser curriculum of one- to four-step problems, some with numbers that don't matter and some that can't be answered. Every expert volunteers at every step; they all learn in the same room from the worked solutions the room discovers itself, and it invents new operations from recurring pieces of them.
 
 Plain Python + NumPy, no other dependencies.
 
@@ -26,10 +26,10 @@ python -m synod.maths report --seeds 10     # compare strategies -> results/MATH
 python -m synod.maths exam                  # 40 hand-written questions -> results/EXAM_REPORT.md
 python -m synod.maths trace                 # every exam deliberation, step by step -> results/council_viewer.html
 python -m synod --seeds 10                  # the sequence world -> results/REPORT.md
-python -m synod.room train                  # the room (~4 min): 42 experts learn the dense curriculum
+python -m synod.room train                  # the room (~5 min): 43 experts learn the dense curriculum
 python -m synod.room ask "Ann has 12 apples. She buys 3 bags with 5 apples in each, then gives away 4. How many apples does Ann have now?"
-python -m synod.room report --seeds 4       # room vs the council, ablations, exam -> results/ROOM_REPORT.md + room_viewer.html
-python -m unittest discover -s tests -t .   # 44 tests
+python -m synod.room report --seeds 3       # room vs ablations and the council, exam (~25 min) -> results/ROOM_REPORT.md + room_viewer.html
+python -m unittest discover -s tests -t .   # 51 tests
 ```
 
 ---
@@ -208,58 +208,82 @@ Q #4750: Kofi had 29 cards and used 8. How many cards remain?  (hidden type: sto
 
 # Part 3: The room, a large council that works problems out step by step
 
-The council in Part 2 answers a question in one go. **The room works it out**: a sequence of exact steps on a shared workspace, with a deliberation behind every step, by 42 small experts that all volunteer at every step and all learn in the same room from the same signals.
+The council in Part 2 answers a question in one go. **The room works it out**: a sequence of exact steps on a shared workspace, with a deliberation behind every step, by 43 small experts that all volunteer at every step and all learn in the same room from the same signals.
 
 | who | how many | kind | what it does |
 |---|---|---|---|
-| operators | 28 | symbolic | one per exact operation (add, solve, gcd, round, mean, …); each learned **when** it's the next move and **which facts** to apply it to, from the words around them |
+| operators | 28 (+ any it invents) | symbolic | one per exact operation (add, solve, gcd, round, mean, …); each learned **when** it's the next move and **which facts** to apply it to, from the words around them |
 | neural pool | 8 | neural | small networks, each reading the question through its own random view; they say **what** should happen next, and the operator for that operation decides what to apply it to. Trained as a mixture of experts |
 | memory, analogy | 2 | symbolic | recall worked solutions of the same or the most similar wording |
 | goal | 1 | symbolic | knows when a solution is finished |
-| checker, estimator, lexicon | 3 | review | checks with learned reliability; a sense of size; which words a step accounts for and which a finished solution leaves unexplained |
+| checker, estimator, lexicon, relevance | 4 | review | checks with learned reliability; a sense of size; which words a step accounts for; **which numbers in the question matter** |
 
-**One step of deliberation.** Every expert proposes the next step it believes in. Operators speak as a group (each one's readiness is read relative to all the others', like a softmax over experts). Experts proposing the same step back the same candidate; reviewers report on its result; a learned judge weighs the candidates and "none of these". The room keeps the three most probable partial solutions open, routes that reach the same answer pool, and it answers only if the answer reaches probability 0.5.
+**One step of deliberation.** Every expert proposes the next step it believes in. Operators speak as a group (each one's readiness is read relative to all the others', like a softmax over experts). Experts proposing the same step back the same candidate; reviewers report on its result; a learned judge weighs the candidates, "none of these" and "there isn't enough information". The room keeps the three most probable partial solutions open, routes that reach the same answer pool, and it answers only if the answer reaches probability 0.5.
 
-**Learning together.** Nobody shows it a worked solution. On a question whose answer is revealed, the room finds its own: its route if it was right, otherwise a search guided by its own experts and judge. That solution is broadcast: every expert learns its part, the judge learns whom to trust at each step (with experts randomly left out, so it learns what each is worth on its own), and every expert's self-model learns how often its proposals were the step the solution needed.
+**Learning together.** Nobody shows it a worked solution. On a question whose answer is revealed, the room finds its own: its route if it was right, otherwise **the route it finds most likely among those that reach the answer**. That solution is broadcast: every expert learns its part, the judge learns whom to trust at each step (with experts randomly left out, so it learns what each is worth on its own), and every expert's self-model learns how often its proposals were the step the solution needed.
 
-**A denser curriculum.** 75 kinds of question, one to four steps: percentages, increases and decreases, areas and perimeters, averages, ranges, speed and distance, making change, chained word problems, compositions. 8,000 practice questions, half with the answer revealed (never the method). Then six test sets with no answers.
+**The curriculum.** 75 kinds of question, one to four steps: percentages, areas, averages, speed, making change, chained word problems, compositions. A quarter of the word problems carry a sentence that doesn't matter ("It is 25 degrees outside.", "A few friends are watching."); some questions leave out a number they need ("Ali buys *some* packs with 4 pens in each pack"), and the right outcome is "not enough information". Small numbers are sometimes written as words. 8,000 practice questions, half with the answer revealed (never the method). Then eight test sets with no answers.
 
-### Results (4 seeds; % right, wrong in brackets, the rest abstentions)
+### Not every number matters, and some questions can't be answered
 
-| strategy | familiar | new wording | numbers ×100 | word problems* | new combinations | four steps** |
-|---|---|---|---|---|---|---|
-| **the room (42 experts)** | **98% (2%)** | 75% (13%) | 97% (2%) | 57% (12%) | 39% (27%) | **14% (22%)** |
-| room, operators only (no neural, memory or analogy) | 89% (3%) | 71% (8%) | 92% (2%) | 38% (1%) | **53% (13%)** | 1% (10%) |
-| room, one neural expert | 98% (1%) | **77% (9%)** | 98% (2%) | 44% (8%) | 52% (19%) | 0% (19%) |
-| room, cross-fitted (sparring benches) | 92% (3%) | 55% (10%) | 96% (1%) | 15% (8%) | 23% (12%) | 0% (8%) |
-| council v2 (question → answer), same curriculum | 87% (2%) | 54% (9%) | 97% (0%) | **64% (30%)** | 8% (43%) | 0% (42%) |
+The first room had "use every number" baked in twice: the search for worked solutions preferred chains that used every fact, and the judge learned that stopping with a number unused was bad. Fine while every number mattered; wrong the moment one doesn't.
 
-\* held-out templates, names and objects, one to three steps. \*\* longer than anything in training.
+- **The search now takes the most probable route that reaches the answer**, under the room's own experts and judge. Short, plausible chains win, and the search stops as soon as nothing still open can beat what it found.
+- **A relevance reviewer** learns which numbers matter from which ones worked solutions used (the words around a number, its sentence, how much that sentence shares with the question). It learned on its own that a number in the question sentence matters, that one whose sentence shares nothing with the question mostly doesn't, and that "years old" and "watching" go with numbers that don't. The judge learned to distrust steps that use a number it flags (−2.6, or −1.2 when the reviewer is unsure).
+- **"Not enough information" is its own outcome**, separate from abstaining ("I'm not sure"). The reader treats "some", "several" and "a few" as quantities with **unknown values**, so the room works the problem as usual and the answer comes out unknown: "increase 400 by a few percent" → `400 × [a few] = unknown` → not enough information. A vague aside ("a few people are waiting nearby") is just one more fact that doesn't matter. Experts can also propose "not enough information" directly.
 
-- **Step by step beats question → answer** on familiar wordings (98% vs 87%), new wordings (75% vs 54%), new combinations (39% vs 8%, and 27% wrong vs 43%) and four-step problems (14% vs 0%), ties on big numbers, and loses on word problems (57% vs 64%), where the old council is wrong on 30% of them.
-- **Right for the right reason.** On one- to three-step test sets, 89–95% of the room's right answers use the same method as the hidden reference program. On four-step problems only 25% do: most of its right answers there took a different route to the same number. Every answer comes with its worked steps.
-- **A division of labour emerged between kinds of expert**: memory backs 99% of steps on familiar wordings, analogy 93–100% on new phrasings, operators most on new combinations (69%) and four-step problems (80%).
-- **What didn't happen:** the neural pool did not specialise. It was trained as a mixture of experts, but every network ended up backing nearly every kind of question (entropy ≈ 5.9 bits of a possible 6.2). And it hurts on new combinations: operators alone get 53% there, against 39% for the full room. The pool copies familiar sentence frames, and the judge learned to trust it on training data where those frames were always right.
-- **High variance between runs.** With the same data and different random starts, new combinations ranged 19–56% and four-step problems 0–50%: every question of a new kind shares its features, so the whole kind flips at once. Read the averages, not single runs.
-- **Exam:** 34/40 right, 2 wrong (the council v2 trained on the same curriculum: 31/40, 5 wrong).
+### Inventing procedures
 
-A worked solution from the report (four steps, longer than anything in training; trimmed):
+Worked solutions are chains, and chains recur. The room keeps a notebook of its solutions, mines pieces that recur across wordings ("a + (b×c) − d", "× then ÷100"), and tries the best as a **new operation with its own expert**. A copy of the room adopts it, both sleep on the same past solutions (the copy's re-expressed with the procedure), then both meet the next 500 questions before learning from them. The procedure is kept only if the copy was **less surprised by the right solutions** (total −log probability: it would find them with a smaller search) and lost no more answers than it won. Nothing knows any procedure in advance.
 
 ```text
-Q: Priya has 52 beads. Priya buys 4 bags with 10 beads in each bag, then gives away 7.
-   Priya shares the rest equally among 5 friends. How many beads does each friend get?
-  on the table: N1 = 52, N2 = 4, N3 = 10, N4 = 7, N5 = 5
-  Step 1: 4 × 10 = 40     mul(N2,N3)  judge 0.88  backed by neural-7 0.98, neural-6 0.92, neural-5 0.84 +6 more
-  Step 2: 52 + 40 = 92    add(N1,S1)  judge 1.00  backed by add 0.99, neural-5 0.99, neural-7 0.98 +5 more
-  Step 3: 92 − 7 = 85     sub(S2,N4)  judge 0.94  backed by neural-6 0.61, neural-4 0.47, sub 0.18
-  Step 4: 85 ÷ 5 = 17     div(S3,N5)  judge 0.67  backed by neural-3 0.32, div 0.00
-          reviews: checker whole-number pass (trusted), lexicon explains: hi
-          also on the table: stop here 0.26 (neural-1 +6)
-  Done: the answer is 17  judge 1.00  backed by goal 0.99, neural-6 0.96 +7 more · lexicon: nothing left unexplained
-  => 17   probability 0.56   [truth 17: correct]
+Q: Jamal has 15 cookies. Jamal buys 3 bags with 7 cookies in each bag, then gives away 22. How many cookies does Jamal have now?
+  Step 1: proc_8e94a(15, 3, 7, 22) = 14  (invented: a + ((b × c) − d))   judge 1.00   backed by proc_8e94a 0.99, neural-8 0.95 +4 more
+  Done: the answer is 14   => 14   probability 1.00 (11 routes reached it)   [truth 14: correct]
 ```
 
-The **[room viewer](results/room_viewer.html)** shows every step of the 40 exam questions and of samples from each test set: who proposed what, how sure each was, what the reviewers said, every rival on the table and why the judge weighed it so. `results/ROOM_REPORT.md` has the full report. The design, and what was tried and cut along the way, are in `docs/ARCHITECTURE.md` section 10.
+### Results (3 seeds; % right, wrong in brackets, the rest abstentions)
+
+| strategy | familiar | new wording | numbers ×100 | word problems | new combinations | four steps | distractors | missing info |
+|---|---|---|---|---|---|---|---|---|
+| **the room** | **95% (4%)** | 70% (20%) | **98% (2%)** | 54% (25%) | 33% (48%) | 1% (62%) | **22% (24%)** | **78% (6%)** |
+| room, without inventing procedures | 95% (3%) | 72% (15%) | 97% (2%) | 53% (18%) | 36% (40%) | 8% (44%) | 19% (21%) | 70% (5%) |
+| room, one neural expert | 95% (2%) | **73% (15%)** | 98% (2%) | 53% (19%) | 41% (36%) | **10% (59%)** | 18% (19%) | 60% (7%) |
+| operators alone (no neural, memory or analogy) | 90% (1%) | 63% (10%) | 91% (0%) | 44% (4%) | **44% (12%)** | 0% (12%) | 6% (5%) | 43% (0%) |
+| search alone, no learning | 0% | 0% | 0% | 0% | 0% | 0% | 0% | 0% |
+| council v2 (question → answer), same curriculum | 89% (0%) | 41% (4%) | 96% (0%) | **64% (12%)** | 0% (22%) | 0% (35%) | 16% (29%) | 0% (49%) |
+
+Word problems, distractors and missing info use held-out templates, names and objects; missing info uses kinds of question that were never incomplete in training.
+
+- **Missing information works, and transfers.** 78% of incomplete questions get "not enough information", on kinds of question it never saw incomplete; it says so wrongly on answerable questions at most 2% of the time. The question→answer council can't express it at all: 49% wrong.
+- **Distractors are the weak spot.** 22% right, mostly by abstaining (54%) rather than being wrong. The test asides are sentences it never saw ("The room has 29 windows."), and their numbers often look relevant enough to bind. When it does get them right, 92% of the time it left the aside alone.
+- **Inventing procedures doesn't pay off yet.** Each seed kept one or two procedures, and the room uses them (7–10% of right answers on word problems and distractors), but against the same room that never invents, the differences (−6 to +8 points) are within seed-to-seed noise. A procedure is relevant to only a few percent of questions, so the trials see 5–20 of them each. What it needs: more relevant questions per trial, or problems where depth is the bottleneck.
+- **Four-step problems collapsed** (14% in the previous room, now 1–10% depending on the variant, 0–31% in single runs). The old room got there by the "use every number" habit; with distractors in the world, it has to learn when to stop from relevance instead, and it doesn't yet trust that enough on problems longer than any it has seen.
+- **"Search alone" gets nothing**: the same deliberation with nothing learned can't tell which of the many possible chains is meant. Everything above is learned. And **operators alone** still beat the full room on new combinations (44% vs 33%): the pattern-copying experts are trusted on familiar frames and mislead on new ones (more in `docs/ARCHITECTURE.md` 10.12).
+- **Exam:** 32/40 right, 7 wrong (the council v2 on the same curriculum: 27/40, 0 wrong).
+
+A step-by-step answer to a question it can't answer:
+
+```text
+Q: What do you get if you increase 400 by a few percent?
+  on the table: N1 = 400, N2 = a few
+  Step 1: 400 × [a few] = unknown     mul(N1,N2)   judge 0.96   backed by neural-8 0.95, neural-6 0.95 +6 more
+  Step 2: ? ÷ 100 = unknown           div(S1,K100) judge 0.81   backed by neural-5 0.93, div 0.68, analogy 0.48
+  Done: the answer depends on a quantity the question doesn't give: not enough information
+  => not enough information   probability 0.96 (13 routes reached it)   [correct]
+```
+
+### Faster
+
+A full run without inventing (8,000 practice questions and 1,600 test questions) takes about 4 minutes on one core, against about 8 minutes before this round with 1,200 test questions. Practice is 1.6× faster per question and answering 3.8× faster. Inventing adds about 2 minutes, because each trial runs two rooms side by side. How:
+- Workspaces never change, so anything derived from them is computed once.
+- Binding scores factor into per-argument scores.
+- The answer search stops as soon as nothing can beat its best route.
+- Operators with a negligible share of readiness stay quiet.
+
+The pure optimisations were checked with a fingerprint of every answer and probability, which stayed identical.
+
+The **[room viewer](results/room_viewer.html)** shows every step of the 40 exam questions and of samples from each test set: who proposed what, how sure each was, what the reviewers said, every rival on the table and why the judge weighed it so. `results/ROOM_REPORT.md` has the full report, including every invention trial. The design, and what was tried and cut along the way, are in `docs/ARCHITECTURE.md` section 10.
 
 ---
 
@@ -315,21 +339,22 @@ synod/
     nodes/           sequence world: intuition, recall, inducer, critic
     world.py, experiment.py, report.py      sequence world, runner, report
     maths/
-      mathlang.py    reading notation: tokens, polynomials, equations, skeletons, task features
+      mathlang.py    reading notation: tokens, number words, vague quantities, polynomials, equations, skeletons
       programs.py    exact primitives, programs, search ("which program explains this answer?")
       nodes.py       parser, reader, estimator, checker
       world.py       the maths curriculum and its held-out test sets
       exam.py, trace.py, viewer.html          the 40-question exam and its step-by-step viewer
       experiment.py, report.py, __main__.py  train / ask / chat / report
     room/
-      workspace.py   facts, 28 exact operations, steps, worked solutions in words
-      world.py       the dense curriculum: 75 kinds of question, one to four steps, six test sets
-      experts.py     the population: operators, neural pool, memory, analogy, goal, checker, estimator, lexicon
-      room.py        deliberation (judge, beam, pooled routes), finding worked solutions, learning together
+      workspace.py   facts (some unknown), 28 exact operations plus invented ones, steps, worked solutions in words
+      world.py       the dense curriculum: 75 kinds of question, asides, missing numbers, eight test sets
+      experts.py     the population: operators, neural pool, memory, analogy, goal, checker, estimator, lexicon, relevance
+      room.py        deliberation (judge, beam, pooled routes), finding worked solutions, learning, sleep, trials
+      procedures.py  noticing recurring pieces of solutions, abstracting them, rewriting solutions with them
       transcript.py, trace.py, viewer.html    worked solutions with their deliberation, as text and as a page
       experiment.py, report.py, exam.py, __main__.py
     transcript.py    renders a deliberation as text
-  tests/             44 tests (unittest)
+  tests/             51 tests (unittest)
   docs/ARCHITECTURE.md   the mechanics and the maths behind them
   results/           REPORT.md (sequences), MATHS_REPORT.md, EXAM_REPORT.md, ROOM_REPORT.md, council_viewer.html, room_viewer.html
 ```

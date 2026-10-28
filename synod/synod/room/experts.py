@@ -27,9 +27,11 @@ and the answers it is sure enough of to teach from.
 """
 from __future__ import annotations
 
+import itertools
 import math
 import zlib
 from collections import Counter, defaultdict
+from itertools import repeat
 
 import numpy as np
 
@@ -38,7 +40,7 @@ from ..learner import SparseLogLinear, sigmoid, softmax
 from ..maths.mathlang import context, read
 from ..maths.nodes import _SparseMLP, numeric_features, squash
 from ..protocol import NEURAL, SYMBOLIC
-from .workspace import ANSWER, CONST, NUM, OPS, STOP, Step, Workspace, canon
+from .workspace import ANSWER, CANT, CONST, INSUFFICIENT, NUM, OPS, STOP, TERMINAL, UNKNOWABLE, Step, Workspace, canon
 
 FEATURE_DIM = 4096
 
@@ -91,8 +93,21 @@ class Scene:
         return out
 
 
+_BUCKET: dict = {}  # (salt, feature) -> hashed input unit, worked out once per process
+
+
+def _bucket(salt: int, s: str) -> int:
+    k = (salt, s)
+    v = _BUCKET.get(k)
+    if v is None:
+        if len(_BUCKET) > 2_000_000:
+            _BUCKET.clear()
+        v = _BUCKET[k] = zlib.crc32(f"{salt}|{s}".encode()) % FEATURE_DIM
+    return v
+
+
 def _hash(salt: int, strings) -> np.ndarray:
-    return np.array(sorted({zlib.crc32(f"{salt}|{s}".encode()) % FEATURE_DIM for s in strings}), dtype=np.int64)
+    return np.array(sorted({_bucket(salt, s) for s in strings}), dtype=np.int64)
 
 
 def open_context(scene: "Scene", ws: Workspace, window: int = 3) -> list:
@@ -100,6 +115,9 @@ def open_context(scene: "Scene", ws: Workspace, window: int = 3) -> list:
     says about the work that's left ("times #", "# percent of", "remainder ...").
     This is the room's locality bias: the next step is read from the part of
     the question that hasn't been dealt with, not from the question as a whole."""
+    key = ("open", ws.history, window)
+    if key in scene.cache:
+        return scene.cache[key]
     out = set()
     sk = scene.skeleton
     for ref in ws.unused:
@@ -113,12 +131,15 @@ def open_context(scene: "Scene", ws: Workspace, window: int = 3) -> list:
             for j in range(max(0, p - window), min(len(sk), p + window + 1)):
                 if j != p:
                     out.add(f"oW:{sk[j]}")
-    return sorted(out)
+    out = scene.cache[key] = sorted(out)
+    return out
 
 
 def state_features(ws: Workspace) -> list:
     """Where the solution stands: step number, the last operation, and which
     kinds of fact are still unused."""
+    if "state" in ws._memo:
+        return ws._memo["state"]
     t = len(ws.steps)
     prev = ws.steps[-1].op if ws.steps else "none"
     free = Counter(r[0] for r in ws.unused)
@@ -126,6 +147,7 @@ def state_features(ws: Workspace) -> list:
     out += [f"free:{k}{min(n, 3)}" for k, n in sorted(free.items())]
     if not free:
         out.append("free:none")
+    ws._memo["state"] = out
     return out
 
 
@@ -186,12 +208,30 @@ class Expert:
 def _run(ws: Workspace, step: Step):
     if step.op == STOP:
         return ws.answer if ws.steps else None
+    if step.op == INSUFFICIENT:
+        return UNKNOWABLE
     return ws.run(step)
 
 
 # ----------------------------------------------------------------------------
 # Operator experts (symbolic)
 # ----------------------------------------------------------------------------
+class _KeyedPairs(dict):
+    """Pair features computed on first use for a state (a dict keyed by (a, b))."""
+
+    __slots__ = ("ws",)
+
+    def __init__(self, ws):
+        super().__init__()
+        self.ws = ws
+
+    def __missing__(self, refs):
+        ws = self.ws
+        table = ws.table
+        names = self[refs] = OperatorExpert._pair_feats(ws, table[refs[0]], table[refs[1]])
+        return names
+
+
 class OperatorExpert(Expert):
     """Knows one exact operation. Learns when it's the right next step and
     which facts to apply it to."""
@@ -206,14 +246,32 @@ class OperatorExpert(Expert):
         self.bind = SparseLogLinear(lr=0.3)
 
     # -- features ----------------------------------------------------------
-    def _fire_feats(self, scene, ws):
-        f = dict.fromkeys(scene.wfeats, 1.0)
-        f.update(dict.fromkeys(state_features(ws), 1.0))
-        f.update(dict.fromkeys(open_context(scene, ws), 1.0))
-        f["bias"] = 1.0
-        return f
+    @staticmethod
+    def _fire_names(scene, ws) -> list:
+        """What every operator reads to decide whether it's the next move (the
+        same for all of them, so it's worked out once per state)."""
+        key = ("fire", ws.history)
+        names = scene.cache.get(key)
+        if names is None:
+            names = scene.cache[key] = list(dict.fromkeys(
+                list(scene.wfeats) + state_features(ws) + open_context(scene, ws) + ["bias"]))
+        return names
 
-    def _arg_feats(self, scene, ws, i, fact):
+    def _fire_feats(self, scene, ws):
+        return dict.fromkeys(self._fire_names(scene, ws), 1.0)
+
+    @staticmethod
+    def _arg_names(scene, ws, i, fact) -> list:
+        """What an operator reads about a fact in argument position i (the
+        same for every operator, so it's worked out once)."""
+        key = ("arg", ws.history, i, fact.ref)
+        names = scene.cache.get(key)
+        if names is None:
+            names = scene.cache[key] = list(dict.fromkeys(OperatorExpert._arg_feats(scene, ws, i, fact)))
+        return names
+
+    @staticmethod
+    def _arg_feats(scene, ws, i, fact):
         kind = fact.ref[0]
         out = [f"{i}|{kind}", f"{i}|{'free' if fact.ref in ws.unused else 'used'}"]
         if fact.ref == ws.last:
@@ -231,43 +289,111 @@ class OperatorExpert(Expert):
                 out += [f"{i}|L:{left}", f"{i}|LL:{left2}_{left}", f"{i}|R:{right}"]
         return out
 
-    def _pair_feats(self, ws, a, b):
-        out = [f"p|{a.ref[0]}{b.ref[0]}"]
-        if a.where and b.where:
-            out.append("p|inorder" if min(a.where) < min(b.where) else "p|reversed")
-        if a.kind == NUM and b.kind in (NUM, CONST):
-            try:
-                out.append("p|a>b" if abs(a.value) > abs(b.value) else "p|a<=b")
-            except TypeError:
-                pass
+    @staticmethod
+    def _pair_feats(ws, a, b):
+        key = ("pair", a.ref, b.ref)
+        out = ws._memo.get(key)
+        if out is None:
+            out = [f"p|{a.ref[0]}{b.ref[0]}"]
+            if a.where and b.where:
+                out.append("p|inorder" if min(a.where) < min(b.where) else "p|reversed")
+            if a.value is UNKNOWABLE or b.value is UNKNOWABLE:
+                out.append("p|unknown")
+            elif a.kind == NUM and b.kind in (NUM, CONST):
+                out.append("p|a>b" if ws.size(a.ref) > ws.size(b.ref) else "p|a<=b")
+            ws._memo[key] = out
         return out
 
     def _bindings(self, scene, ws):
-        """(binding refs, feature dict) for every type-correct binding."""
-        cache = {}
-
-        def feats(i, fact):
-            key = (i, fact.ref)
-            if key not in cache:
-                cache[key] = self._arg_feats(scene, ws, i, fact)
-            return cache[key]
-
+        """(binding refs, feature dict) for every type-correct binding (for learning)."""
         out = []
         for refs in ws.bindings(self.op):
             facts = [ws.fact(r) for r in refs]
             f = {}
             for i, fact in enumerate(facts):
-                for name in feats(i, fact):
+                for name in self._arg_names(scene, ws, i, fact):
                     f[name] = 1.0
-            if len(facts) == 2:
-                for name in self._pair_feats(ws, facts[0], facts[1]):
-                    f[name] = 1.0
+            for pair in itertools.combinations(range(len(facts)), 2):
+                for name in self._pair_names(ws)[tuple(refs[k] for k in pair)]:
+                    f[name if pair == (0, 1) else f"{pair}{name}"] = 1.0
             out.append((refs, f))
+        return out
+
+    def _scored(self, scene, ws):
+        """[(binding refs, score)] for every type-correct binding. The binding
+        model is linear and each argument position has its own features, so a
+        binding's score is the sum of its arguments' scores and the pair's:
+        each fact is scored once per position, not once per pairing."""
+        binds = ws.bindings(self.op)
+        if not binds:
+            return []
+        get = self.bind.w.get
+        table = ws.table
+        names = self._arg_names
+        zero = repeat(0.0)
+        p0 = {}
+        if len(binds[0]) == 1:
+            out = []
+            for refs in binds:
+                r = refs[0]
+                s0 = p0.get(r)
+                if s0 is None:
+                    s0 = p0[r] = sum(map(get, names(scene, ws, 0, table[r]), zero))
+                out.append((refs, s0))
+            return out
+        if len(binds[0]) > 2:
+            return self._scored_n(scene, ws, binds)
+        p1 = {}
+        pairs = self._pair_names(ws)
+        out = []
+        for refs in binds:
+            a, b = refs
+            s0 = p0.get(a)
+            if s0 is None:
+                s0 = p0[a] = sum(map(get, names(scene, ws, 0, table[a]), zero))
+            s1 = p1.get(b)
+            if s1 is None:
+                s1 = p1[b] = sum(map(get, names(scene, ws, 1, table[b]), zero))
+            out.append((refs, s0 + s1 + sum(map(get, pairs[refs], zero))))
+        return out
+
+    def _scored_n(self, scene, ws, binds):
+        """The same for an invented procedure with three or more parameters."""
+        get = self.bind.w.get
+        table = ws.table
+        zero = repeat(0.0)
+        pos = [{} for _ in binds[0]]
+        pairs = self._pair_names(ws)
+        combos = list(itertools.combinations(range(len(binds[0])), 2))
+        out = []
+        for refs in binds:
+            total = 0.0
+            for i, r in enumerate(refs):
+                s0 = pos[i].get(r)
+                if s0 is None:
+                    s0 = pos[i][r] = sum(map(get, self._arg_names(scene, ws, i, table[r]), zero))
+                total += s0
+            for pair in combos:
+                names = pairs[(refs[pair[0]], refs[pair[1]])]
+                total += sum(map(get, names if pair == (0, 1) else [f"{pair}{n}" for n in names], zero))
+            out.append((refs, total))
+        return out
+
+    @staticmethod
+    def _pair_names(ws) -> dict:
+        """(a, b) -> pair features, for every pair of facts (once per state)."""
+        out = ws._memo.get("pairs")
+        if out is None:
+            out = ws._memo["pairs"] = _KeyedPairs(ws)
         return out
 
     # -- proposing ---------------------------------------------------------
     def readiness(self, scene, ws) -> float:
-        return sigmoid(self.fire.score(self._fire_feats(scene, ws)))
+        key = (id(self), "ready", ws.history)
+        v = scene.cache.get(key)
+        if v is None:
+            v = scene.cache[key] = sigmoid(sum(map(self.fire.w.get, self._fire_names(scene, ws), repeat(0.0))))
+        return v
 
     def candidates(self, scene, ws, top: int = 1):
         """My best ways to act here: [(step, value, p_fire, p_binding)]."""
@@ -278,14 +404,15 @@ class OperatorExpert(Expert):
 
     def _candidates(self, scene, ws, top):
         p_fire = self.readiness(scene, ws)
-        binds = self._bindings(scene, ws)
+        binds = self._scored(scene, ws)
         if not binds:
             return []
-        scores = [self.bind.score(f) for _, f in binds]
-        probs = softmax(scores)
-        order = sorted(range(len(binds)), key=lambda k: -probs[k])
+        probs = softmax([s for _, s in binds])
+        best = max(range(len(probs)), key=probs.__getitem__)
         out = []
-        for k in order:
+        # usually the most likely binding runs; sort the rest only if it doesn't
+        order = [best] if top == 1 else sorted(range(len(binds)), key=lambda k: -probs[k])
+        for k in self._fallback(order, probs, best):
             step = canon(Step(self.op, binds[k][0]))
             v = ws.run(step)
             if v is not None:
@@ -293,6 +420,12 @@ class OperatorExpert(Expert):
                 if len(out) >= top:
                     break
         return out
+
+    @staticmethod
+    def _fallback(order, probs, best):
+        yield from order
+        if len(order) == 1:
+            yield from (k for k in sorted(range(len(probs)), key=lambda k: -probs[k]) if k != best)
 
     def propose(self, scene, ws, top: int = 1):
         """Operators speak as a group: each one's readiness is read relative to
@@ -335,7 +468,7 @@ class OperatorExpert(Expert):
 VIEWS = ("u", "b", "s", "c")
 
 
-OP_TOKENS = list(OPS) + [STOP]
+OP_TOKENS = list(OPS) + [STOP, INSUFFICIENT]
 
 
 class NeuralExpert(Expert):
@@ -356,13 +489,34 @@ class NeuralExpert(Expert):
         extra = [v for v in VIEWS[1:] if rng.random() < 0.6]
         self.view = ("u",) + tuple(extra)
         self.hidden = int(rng.choice([32, 48, 64]))
-        self.net = _SparseMLP(self.hidden, rng, n_out=len(OP_TOKENS), lr=0.05)
+        self.tokens = list(OP_TOKENS)  # what it can say comes next (grows when the room invents an operation)
+        self.net = _SparseMLP(self.hidden, rng, n_out=len(self.tokens), lr=0.05)
         self.binders: dict = {}  # op -> that operation's expert (set by the bench)
 
+    def add_token(self, op: str) -> None:
+        if op not in self.tokens:
+            self.tokens.append(op)
+            self.net.grow(len(self.tokens))
+
+    def learn_token(self, scene, path, op: str) -> None:
+        """Learn when a new word comes next, from past solutions, without
+        relearning anything else: only that word's output weights move."""
+        j = self.tokens.index(op)
+        net = self.net
+        for ws, step in path:
+            idx, (h, p) = self.distribution(scene, ws)
+            g = p[j] - (1.0 if step.op == op else 0.0)
+            net.W2[:, j] -= net.lr * g * h
+            net.b2[j] -= net.lr * g
+
     def _input(self, scene, ws):
-        st = state_features(ws) + open_context(scene, ws) + [f"h{k}:{tok}" for k, tok in enumerate(ws.history[-3:])]
-        base = scene.hashed(self.salt, self.view)
-        return np.unique(np.concatenate([base, _hash(self.salt + 1, st)]))
+        key = ("nin", self.salt, self.view, ws.history)
+        idx = scene.cache.get(key)
+        if idx is None:
+            st = state_features(ws) + open_context(scene, ws) + [f"h{k}:{tok}" for k, tok in enumerate(ws.history[-3:])]
+            base = scene.hashed(self.salt, self.view)
+            idx = scene.cache[key] = np.unique(np.concatenate([base, _hash(self.salt + 1, st)]))
+        return idx
 
     def distribution(self, scene, ws):
         idx = self._input(scene, ws)
@@ -379,13 +533,17 @@ class NeuralExpert(Expert):
 
     def _propose_op(self, scene, ws, p):
         for k in np.argsort(-p)[:3]:
-            op, pk = OP_TOKENS[int(k)], float(p[k])
+            op, pk = self.tokens[int(k)], float(p[k])
             if op == STOP:
                 if ws.steps:
                     ev = ("n", conf_bucket(pk))
                     return [Proposal(self.name, self.kind, ANSWER, ws.answer, self.calibrated(ev, pk), ev,
                                      f"thinks it's finished ({pk:.0%})")]
                 continue
+            if op == INSUFFICIENT:
+                ev = ("n", conf_bucket(pk), "cant")
+                return [Proposal(self.name, self.kind, CANT, UNKNOWABLE, self.calibrated(ev, pk), ev,
+                                 f"thinks the question doesn't give enough ({pk:.0%})")]
             binder = self.binders.get(op)
             found = binder.candidates(scene, ws, 1) if binder is not None else []
             if not found:
@@ -396,10 +554,9 @@ class NeuralExpert(Expert):
                              f"says {op} next ({pk:.0%}); {op} applies it as {step.token}")]
         return []
 
-    @staticmethod
-    def _index(token):
-        op = STOP if token == STOP else token.split("(")[0]
-        return OP_TOKENS.index(op) if op in OP_TOKENS else None
+    def _index(self, token):
+        op = token if token in TERMINAL else token.split("(")[0]
+        return self.tokens.index(op) if op in self.tokens else None
 
     def prob_of(self, scene, ws, token) -> float:
         idx, out = self.distribution(scene, ws)
@@ -484,21 +641,32 @@ class AnalogyExpert(Expert):
         self.n = 0
 
     def _idf(self, w):
-        return math.log((1 + self.n) / (1 + self.df[w]))
+        cache = self.__dict__.setdefault("_idf_cache", {})
+        if cache.get("_n") != self.n:
+            cache.clear()
+            cache["_n"] = self.n
+        v = cache.get(w)
+        if v is None:
+            v = cache[w] = math.log((1 + self.n) / (1 + self.df[w]))
+        return v
 
     def similar(self, scene):
+        key = (id(self), "similar")
+        if key in scene.cache:
+            return scene.cache[key]
         mine = set(scene.skeleton)
         out = []
-        for sk in self.by_slots.get(scene.slots, ()):
+        for sk in sorted(self.by_slots.get(scene.slots, ())):
             if sk == scene.skeleton:
                 continue
             other = set(sk)
-            inter = sum(self._idf(w) for w in mine & other)
-            union = sum(self._idf(w) for w in mine | other)
+            inter = sum(self._idf(w) for w in sorted(mine & other))
+            union = sum(self._idf(w) for w in sorted(mine | other))
             if union > 0:
                 out.append((inter / union, sk))
         out.sort(key=lambda t: (-t[0], t[1]))
-        return out[:self.k]
+        out = scene.cache[key] = out[:self.k]
+        return out
 
     def propose(self, scene, ws):
         if scene.skeleton in self.solutions:
@@ -598,13 +766,16 @@ class CheckerExpert(Expert):
 
     def review(self, scene, ws, step, value):
         final = step.op == STOP
-        if value is None:
+        if value is None or value is UNKNOWABLE:
             return ()
         out = []
         for c in self.CHECKS:
             if c == "yes-or-no" and not final:
                 continue
-            rel = self.reliability.mean(self._key(c, scene, final))
+            key = (id(self), c, final)
+            rel = scene.cache.get(key)
+            if rel is None:
+                rel = scene.cache[key] = self.reliability.mean(self._key(c, scene, final))
             out.append(f"{c}:{'pass' if self._holds(c, value) else 'fail'}:{'trusted' if rel >= self.trusted_at else 'weak'}")
         return tuple(out)
 
@@ -612,7 +783,7 @@ class CheckerExpert(Expert):
         for ws, step in path:
             final = step.op == STOP
             v = ws.answer if final else ws.run(step)
-            if v is None:
+            if v is None or v is UNKNOWABLE:
                 continue
             for c in self.CHECKS:
                 if c == "yes-or-no" and not final:
@@ -641,14 +812,14 @@ class EstimatorExpert(Expert):
         return float(out[0])
 
     def review(self, scene, ws, step, value):
-        if step.op != STOP or value is None or self.seen < 200:
+        if step.op != STOP or value is None or value is UNKNOWABLE or self.seen < 200:
             return ()
         sd = max(math.sqrt(self.resid.get(scene.context, 1.0)), 0.15)
         z = abs(squash(float(value)) - self.guess(scene)) / sd
         return (f"size:{'close' if z <= 1 else 'loose' if z <= 2.5 else 'far' if z <= 5 else 'way-off'}",)
 
     def learn_review(self, scene, path, answer):
-        if answer is None:
+        if answer is None or answer is UNKNOWABLE:
             return
         idx = scene.hashed(self.salt, ("u", "b", "s"))
         dense = numeric_features(scene.reading)
@@ -695,10 +866,17 @@ class LexiconExpert(Expert):
 
     def best(self, w):
         if w not in self._best:
-            ops = {o for (ww, o) in self.nwo if ww == w}
+            ops = self.__dict__.setdefault("ops_of", defaultdict(set)).get(w, ())
             scored = [(self.assoc(w, o), o) for o in sorted(ops)]
             self._best[w] = max(scored) if scored else (0.0, None)
         return self._best[w]
+
+    def _meanings(self, scene):
+        """(strength, best operation) for each word of the question, worked out once."""
+        key = (id(self), "meanings", self.n)
+        if key not in scene.cache:
+            scene.cache[key] = [self.best(w) for w in sorted(set(scene.reading.words))]
+        return scene.cache[key]
 
     @staticmethod
     def _bucket(x):
@@ -707,15 +885,15 @@ class LexiconExpert(Expert):
     def review(self, scene, ws, step, value):
         if self.n < 50:
             return ()
-        words = set(scene.reading.words)
+        meanings = self._meanings(scene)
         done = {op_word(s) for s in ws.steps}
         if step.op == STOP:
-            left = sum(s for s, o in (self.best(w) for w in words) if o is not None and o not in done)
+            left = sum(s for s, o in meanings if o is not None and o not in done)
             return (f"unexplained:{self._bucket(left)}",)
         o = op_word(step)
         if o in done:
             return ("explains:repeat",)
-        gain = sum(s for s, oo in (self.best(w) for w in words) if oo == o)
+        gain = sum(s for s, oo in meanings if oo == o)
         return (f"explains:{self._bucket(gain)}",)
 
     def learn_review(self, scene, path, answer):
@@ -725,10 +903,96 @@ class LexiconExpert(Expert):
         self.nw.update(words)
         self.no.update(ops)
         self.nwo.update((w, o) for w in words for o in ops)
+        index = self.__dict__.setdefault("ops_of", defaultdict(set))
+        for w in words:
+            index[w].update(ops)
         self._best.clear()
 
 
-def population(n_neural: int = 8, seed: int = 0, operators=None, memory=True, analogy=True, lexicon=True) -> list:
+def _rel_bucket(p: float) -> str:
+    return "lo" if p < 0.3 else "mid" if p < 0.7 else "hi"
+
+
+class RelevanceExpert(Expert):
+    """Learns which numbers in a question matter, from which ones worked
+    solutions actually used: P(used | the words around it, the words of its
+    sentence, how much its sentence shares with the question being asked).
+    Tells the judge when stopping would leave numbers that matter unused, and
+    when a step uses one that doesn't."""
+
+    kind = SYMBOLIC
+    role = "review"
+    cost = 0.02
+
+    def __init__(self, name="relevance", seed=0):
+        super().__init__(name, seed)
+        self.model = SparseLogLinear(lr=0.3)
+        self.n = 0
+        self.df: Counter = Counter()  # how many questions each word appeared in
+
+    def _idf(self, w) -> float:
+        return math.log((1 + self.n) / (1 + self.df[w]))
+
+    def _feats(self, scene, fact) -> dict:
+        sk, sent = scene.skeleton, scene.reading.sentences
+        f = {"bias": 1.0, f"unknown:{int(fact.value is UNKNOWABLE)}": 1.0}
+        for left, left2, right in scene.around(fact):
+            f[f"L:{left}"] = f[f"LL:{left2}_{left}"] = f[f"R:{right}"] = 1.0
+        if fact.where and sent:
+            p = fact.where[0]
+            mine = {sk[j] for j in range(len(sk)) if sent[j] == sent[p] and not sk[j].startswith("<") and sk[j] != "#"}
+            last = max(sent)
+            if sent[p] == last:
+                f["in-question"] = 1.0
+            else:
+                # how much its sentence shares with the question asked, rare words counting most
+                asked = {sk[j] for j in range(len(sk)) if sent[j] == last and not sk[j].startswith("<") and sk[j] != "#"}
+                shared = sum(self._idf(w) for w in sorted(mine & asked))
+                f[f"shares:{0 if shared == 0 else 1 if shared < 1.5 else 2 if shared < 3 else 3 if shared < 5 else 4}"] = 1.0
+            for w in mine:
+                f[f"s:{w}"] = 1.0
+        return f
+
+    def relevance(self, scene, ws) -> dict:
+        """P(used) for each number in the question."""
+        key = (id(self), "rel", self.n)
+        out = scene.cache.get(key)
+        if out is None:
+            out = scene.cache[key] = {r: sigmoid(self.model.score(self._feats(scene, f)))
+                                      for r, f in ws.facts.items() if f.kind == NUM}
+        return out
+
+    def review(self, scene, ws, step, value):
+        if self.n < 50:
+            return ()
+        rel = self.relevance(scene, ws)
+        if step.op == STOP:
+            open_ = [rel[r] for r in ws.unused if r in rel]
+            left = sum(1 for p in open_ if p >= 0.5)
+            return (f"open-relevant:{min(left, 2)}", f"open-max:{_rel_bucket(max(open_, default=0.0))}")
+        if step.op in TERMINAL:
+            return ()
+        ps = [rel[a] for a in step.args if a in rel]
+        if not ps:
+            return ()
+        return (f"uses:{_rel_bucket(min(ps))}",)
+
+    def learn_review(self, scene, path, answer):
+        if not path or path[-1][1].op == INSUFFICIENT:
+            return
+        ws0 = path[0][0]
+        used = {a for _, s in path for a in s.args}
+        for r, f in ws0.facts.items():
+            if f.kind != NUM:
+                continue
+            feats = self._feats(scene, f)
+            self.model.step(feats, sigmoid(self.model.score(feats)) - (1.0 if r in used else 0.0))
+        self.n += 1
+        self.df.update(set(scene.skeleton))
+
+
+def population(n_neural: int = 8, seed: int = 0, operators=None, memory=True, analogy=True, lexicon=True,
+               relevance=True) -> list:
     """One bench of the room's members."""
     ops = list(OPS) if operators is None else list(operators)
     experts = [OperatorExpert(op, seed + i) for i, op in enumerate(ops)]
@@ -744,4 +1008,6 @@ def population(n_neural: int = 8, seed: int = 0, operators=None, memory=True, an
     experts += [GoalExpert(seed=seed), CheckerExpert(seed=seed), EstimatorExpert(seed=seed)]
     if lexicon:
         experts.append(LexiconExpert(seed=seed))
+    if relevance:
+        experts.append(RelevanceExpert(seed=seed))
     return experts

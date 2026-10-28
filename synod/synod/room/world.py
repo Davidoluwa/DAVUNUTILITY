@@ -18,6 +18,18 @@ Test sets probe different kinds of generalisation:
   story       word problems (1-3 steps) with new names, objects and phrasings
   compose     combinations of familiar steps never seen together (2-3 steps)
   longer      four-step problems, longer than anything in training
+  distract    word problems with one or two sentences that don't matter (new
+              ones; some carry numbers, some vague words like "a few")
+  missing     word problems that leave out a number they need ("buys some
+              packs"), from kinds of question never seen incomplete in training
+
+Relevance and missing information. A quarter of the training word problems
+carry a sentence that doesn't matter ("It is 25 degrees outside.", or a vague
+one, "A few friends are watching."), and some training questions leave a
+number out: the right outcome is "not enough information". Only half of the
+kinds of word problem ever appear incomplete in training; the missing test set
+uses the other half. Small numbers in word problems are sometimes written as
+words ("three"), which the reader turns into numbers.
 """
 from __future__ import annotations
 
@@ -30,9 +42,9 @@ import numpy as np
 from ..maths.mathlang import context, features, read
 from ..maths.world import NAMES_TEST, NAMES_TRAIN, OBJ_TEST, OBJ_TRAIN, UNITS, _isprime, _poly_text
 from ..protocol import Task
-from .workspace import Workspace, canonical_program, program_to_steps
+from .workspace import UNKNOWABLE, Workspace, canonical_program, program_to_steps
 
-NUMERIC = ("a", "b", "c", "d", "e", "p")
+NUMERIC = ("a", "b", "c", "d", "e", "p", "z1", "z2")  # z1, z2: numbers in sentences that don't matter
 SLOTS = {"eq": ("Q", 0), "fdef": ("F", 0), "call": ("C", 0), "poly": ("X", 0), "x": ("X", 0), "list": ("L", 0)}
 
 
@@ -549,15 +561,82 @@ def fill(template: str, values: dict) -> str:
     return text[0].upper() + text[1:]
 
 
+# ----------------------------------------------------------------------------
+# Sentences that don't matter, missing numbers, numbers in words
+# ----------------------------------------------------------------------------
+# {z}: a number, {v}: a vague quantity ("some", "a few")
+ASIDES_TRAIN = ["It is {z} degrees outside.", "The shop opens at {z} o'clock.", "There are {z} people in the queue.",
+                "The bus ride takes {z} minutes.", "{n} is {z} years old.",
+                "{v} friends are watching.", "There are {v} clouds in the sky."]
+ASIDES_TEST = ["The room has {z} windows.", "It rained on {z} days last month.", "The street has {z} houses.",
+               "{n} has a cousin who is {z}.", "{v} birds sing outside.", "{v} people are waiting nearby."]
+VAGUE = ["some", "several", "a few"]
+_SENTENCE = re.compile(r"(?<=[.?!])\s+")
+_WORDS = "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen " \
+         "seventeen eighteen nineteen".split()
+_TENS_W = {20: "twenty", 30: "thirty", 40: "forty", 50: "fifty", 60: "sixty", 70: "seventy", 80: "eighty", 90: "ninety"}
+
+
+def in_words(n: int):
+    """2..99 as words ("seven", "twenty-five"), or None."""
+    if not isinstance(n, int) or not 2 <= n <= 99:
+        return None
+    if n < 20:
+        return _WORDS[n]
+    t, u = divmod(n, 10)
+    return _TENS_W[10 * t] + ("" if u == 0 else "-" + _WORDS[u])
+
+
+def add_aside(tpl: str, aside: str, name: str, at: int) -> str:
+    """Insert a sentence that doesn't matter before sentence ``at`` (never
+    after the question)."""
+    parts = _SENTENCE.split(tpl)
+    parts.insert(min(at, len(parts) - 1), aside.replace("{z}", "{" + name + "}").replace("{v}", "{" + name + "}"))
+    return " ".join(parts)
+
+
+def hide_number(tpl: str, program, rng) -> str | None:
+    """Pick one number the solution needs, to be given only vaguely ("buys
+    some packs"), so the question no longer gives enough to answer it. Only
+    blanks a vague word can stand in for grammatically (not "a {c} dollar
+    note"). Returns the blank's name."""
+    def needed(p):
+        if isinstance(p, str):
+            return {p} if p in NUMERIC else set()
+        return set().union(*[needed(a) for a in p[1:]]) if p and p[0] != "K" else set()
+    names = sorted(needed(program))
+    ok = [b for b in names if "{" + b + "}" in tpl and not re.search(r"\b(a|an)\s+\{" + b + r"\}", tpl)]
+    if not ok:
+        return None
+    return ok[int(rng.integers(len(ok)))]
+
+
+def wordy(fam: Family) -> bool:
+    """Word problems: the kinds of question that get asides, missing numbers and numbers in words."""
+    return fam.group in ("story", "multi")
+
+
+def _incomplete_ok(fam: Family) -> bool:
+    return wordy(fam) and any(hide_number(t, fam.program, np.random.default_rng(0)) for t in fam.train + fam.test)
+
+
+INCOMPLETE = [f.name for f in FAMILIES if _incomplete_ok(f)]
+INCOMPLETE_TRAIN = set(INCOMPLETE[0::2])  # kinds of question seen incomplete in training
+INCOMPLETE_TEST = set(INCOMPLETE[1::2])  # ... and only ever incomplete at test
+
+
 @dataclass
 class RoomScenario:
     n_train: int = 8000
     n_per_test_split: int = 200
     label_rate: float = 0.5
     seed: int = 0
+    aside_rate: float = 0.25  # training word problems with a sentence that doesn't matter
+    missing_rate: float = 0.08  # training questions that leave out a number they need
+    words_rate: float = 0.2  # numbers in word problems written as words
 
 
-SPLITS = ("seen", "paraphrase", "big", "story", "compose", "longer")
+SPLITS = ("seen", "paraphrase", "big", "story", "compose", "longer", "distract", "missing")
 
 
 class RoomWorld:
@@ -606,13 +685,40 @@ class RoomWorld:
         return MathWorld._seq(mw, big)
 
     # -- making questions ------------------------------------------------
-    def make(self, fam: Family, held_out: bool = False, big: bool = False):
-        """(question, answer, reference program grounded in the question's slots)."""
+    def make(self, fam: Family, held_out: bool = False, big: bool = False, asides: int = 0, missing: bool = False):
+        """(question, answer, reference program grounded in the question's slots).
+        With ``missing``, one needed number is replaced by a vague word and the
+        answer and program are None."""
         pool = fam.test if held_out and fam.test else fam.train
-        tpl = pool[self.i(0, len(pool) - 1)]
         sampler = fam.sample
         values = sampler(self, big, held_out) if getattr(sampler, "story", False) else sampler(self, big)
-        q = fill(tpl, values)
+        tpl = pool[self.i(0, len(pool) - 1)]
+        hidden = None
+        if missing:
+            options = [t for t in pool if hide_number(t, fam.program, self.rng)] or \
+                [t for t in fam.train + fam.test if hide_number(t, fam.program, self.rng)]
+            tpl = options[self.i(0, len(options) - 1)]
+            hidden = hide_number(tpl, fam.program, self.rng)
+        lines = ASIDES_TEST if held_out else ASIDES_TRAIN
+        if "n" not in values:
+            lines = [a for a in lines if "{n}" not in a]
+        vague = {}
+        for k in range(asides):
+            line = self.pick(lines)
+            tpl = add_aside(tpl, line, f"z{k + 1}", self.i(0, 9))
+            values[f"z{k + 1}"] = self.i(2, 60)
+            if "{v}" in line:
+                vague[f"z{k + 1}"] = line.startswith("{v}")
+        shown = dict(values)
+        if wordy(fam):
+            for b in NUMERIC:
+                w = in_words(shown.get(b)) if b in shown else None
+                if w is not None and self.rng.random() < self.sc.words_rate:
+                    shown[b] = w
+        for b, first in list(vague.items()) + ([(hidden, False)] if hidden else []):
+            w = self.pick(VAGUE)
+            shown[b] = w[0].upper() + w[1:] if first else w
+        q = fill(tpl, shown)
         prog = ground(fam.program, tpl, values)
         r = read(q)
         ws = Workspace(r)
@@ -623,9 +729,12 @@ class RoomWorld:
             ws = ws.apply(step, v)
         return q, ws.answer, canonical_program(prog)
 
-    def _task(self, tid, fam, held_out, big, labeled, split):
-        q, ans, prog = self.make(fam, held_out, big)
+    def _task(self, tid, fam, held_out, big, labeled, split, asides=0, missing=False):
+        q, ans, prog = self.make(fam, held_out, big, asides, missing)
         r = read(q)
+        if ans is UNKNOWABLE:
+            return Task(tid, (), 1e-6, None, fam.name, labeled, question=q, context=context(r), split=split,
+                        features=features(r), solution=prog, answerable=False)
         return Task(tid, (), 1e-6 * max(1.0, abs(float(ans))), float(ans), fam.name, labeled, question=q,
                     context=context(r), split=split, features=features(r), solution=prog)
 
@@ -635,9 +744,17 @@ class RoomWorld:
     def train_stream(self):
         core, multi, stories, comps = (self.menu([g]) for g in ("core", "multi", "story", "comp"))
         menu = core + multi + stories * 2 + comps * 2
+        incomplete = [f for f in menu if f.name in INCOMPLETE_TRAIN]
         for t in range(self.sc.n_train):
+            labeled = bool(self.rng.random() < self.sc.label_rate)
+            if self.rng.random() < self.sc.missing_rate:
+                fam = self.pick(incomplete)
+                asides = int(self.rng.random() < self.sc.aside_rate)
+                yield self._task(t, fam, False, False, labeled, "train", asides, missing=True)
+                continue
             fam = self.pick(menu)
-            yield self._task(t, fam, False, False, bool(self.rng.random() < self.sc.label_rate), "train")
+            asides = int(wordy(fam) and self.rng.random() < self.sc.aside_rate)
+            yield self._task(t, fam, False, False, labeled, "train", asides)
 
     def test_tasks(self, start_id: int):
         core, multi, stories, comps = (self.menu([g]) for g in ("core", "multi", "story", "comp"))
@@ -649,11 +766,19 @@ class RoomWorld:
             "story": (stories, True, False),
             "compose": (self.menu(["comp_test"]), True, False),
             "longer": (self.menu(["long"]), True, False),
+            "distract": ([f for f in FAMILIES if wordy(f)], True, False),
+            "missing": ([f for f in FAMILIES if f.name in INCOMPLETE_TEST], True, False),
         }
         for split in SPLITS:
             fams, held, big = plan[split]
             for _ in range(self.sc.n_per_test_split):
-                out.append(self._task(tid, self.pick(fams), held, big, False, split))
+                fam = self.pick(fams)
+                if split == "distract":
+                    out.append(self._task(tid, fam, held, big, False, split, asides=self.i(1, 2)))
+                elif split == "missing":
+                    out.append(self._task(tid, fam, held, big, False, split, asides=self.i(0, 1), missing=True))
+                else:
+                    out.append(self._task(tid, fam, held, big, False, split))
                 tid += 1
         order = self.rng.permutation(len(out))
         return [out[i] for i in order]

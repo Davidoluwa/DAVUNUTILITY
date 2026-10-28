@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import time
 from collections import Counter, defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 
@@ -11,7 +11,7 @@ from ..council import Council
 from ..maths.experiment import make_nodes
 from ..objective import Objective
 from .experts import NeuralExpert, OperatorExpert
-from .room import Room, make_room
+from .room import Room, make_room, verdict
 from .workspace import canonical_program, steps_to_program
 from .world import RoomScenario, RoomWorld
 
@@ -24,11 +24,14 @@ def _room(**kw):
 
 STRATEGIES = {
     "room": _room(),
-    "room, cross-fitted (two sparring benches)": _room(crossfit=True),
+    "room, without inventing procedures": _room(invent=False),
     "room, one neural expert": _room(n_neural=1),
-    "room, operators only": _room(n_neural=0, memory=False, analogy=False),
+    "operators alone (no neural, memory or analogy)": _room(n_neural=0, memory=False, analogy=False),
+    "search alone, no learning": _room(),
+    "room, cross-fitted (two sparring benches)": _room(crossfit=True),
     "council v2 (question -> answer)": lambda seed: Council(make_nodes(seed)),
 }
+UNTRAINED = {"search alone, no learning"}  # skips practice: the same deliberation with nothing learned
 
 
 @dataclass
@@ -48,6 +51,7 @@ class RoomRun:
             "accuracy": len(right) / n,
             "wrong": sum(r["delivered"] and not r["correct"] for r in rows) / n,
             "abstain": sum(not r["delivered"] for r in rows) / n,
+            "said_missing": sum(r.get("said_missing", False) for r in rows) / n,
             "method": sum(r["method"] for r in right) / max(len(right), 1),
             "cost": sum(r["cost"] for r in rows) / n,
             "utility": sum(r["utility"] for r in rows) / n,
@@ -73,8 +77,10 @@ def run_room(name: str = "room", seed: int = 0, scenario: RoomScenario | None = 
     obj = Objective()
     out = RoomRun(name, orchestrator=orch)
     started = time.time()
-    tasks = list(world.train_stream())
+    tasks = [] if name in UNTRAINED else list(world.train_stream())
     n_train = len(tasks)
+    if name in UNTRAINED:
+        orch.config.learn = False
     tasks += world.test_tasks(n_train)
     for k, task in enumerate(tasks):
         if freeze_at_test and k == n_train:
@@ -86,14 +92,18 @@ def run_room(name: str = "room", seed: int = 0, scenario: RoomScenario | None = 
         if isinstance(orch, Room):
             res = orch.handle(task)
             given = res.answer
-            method = res.route is not None and canonical_program(steps_to_program(res.steps)) == task.solution
-            row = {"steps": len(res.steps) - 1 if res.route else 0, "backers": backers(res) if given is not None else []}
+            method = res.route is not None and (canonical_program(steps_to_program(res.steps)) == task.solution
+                                                if task.answerable else res.insufficient)
+            row = {"steps": len(res.steps) - 1 if res.route else 0, "backers": backers(res) if given is not None else [],
+                   "said_missing": res.insufficient, "ops": tuple(s.op for s in res.steps)}
             cost = res.cost
         else:
-            rec = orch.handle(task)
+            # the old council can only answer with a number; an incomplete
+            # question can't teach it anything, so it never sees one as labeled
+            rec = orch.handle(task if task.answerable else replace(task, labeled=False))
             given = rec.final.value if rec.final is not None else None
             method, row, cost = False, {"steps": 0, "backers": []}, rec.cost
-        ok = given is not None and task.is_correct(float(given))
+        ok = verdict(task, given) == "right"
         row.update({"split": task.split, "family": task.family, "delivered": given is not None, "correct": bool(ok),
                     "method": bool(method and ok), "cost": cost, "utility": obj.score(given is not None, bool(ok), cost),
                     "depth": len(task.solution and _ops(task.solution))})

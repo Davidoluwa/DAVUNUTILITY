@@ -4,10 +4,15 @@ from fractions import Fraction
 from synod.maths.mathlang import read
 from synod.protocol import Task
 from synod.room.experts import Scene, open_context
-from synod.room.room import make_room
+import pickle
+
+from synod.room import procedures
+from synod.room.experts import NeuralExpert
+from synod.room.room import make_room, verdict
 from synod.room.transcript import render
-from synod.room.workspace import Step, Workspace, canonical_program, program_to_steps, say, steps_to_program
-from synod.room.world import FAMILIES, RoomScenario, RoomWorld
+from synod.room.workspace import (PROCS, UNKNOWABLE, Step, Workspace, canonical_program, program_to_steps, say,
+                                  steps_to_program)
+from synod.room.world import FAMILIES, INCOMPLETE_TEST, INCOMPLETE_TRAIN, RoomScenario, RoomWorld
 
 
 class WorkspaceTest(unittest.TestCase):
@@ -39,7 +44,47 @@ class WorkspaceTest(unittest.TestCase):
         self.assertEqual(len(ws.bindings("sub")), 2)
 
 
+class ReadingTest(unittest.TestCase):
+    def test_numbers_written_as_words(self):
+        r = read("Ali has three pens and twenty-five pencils. Each one costs two hundred cents.")
+        self.assertEqual(r.nums, [3, 25, 200])
+        self.assertEqual(r.texts[("N", 1)], "twenty-five")
+        self.assertIn("one", r.skeleton)  # a lone "one" stays a word
+
+    def test_a_vague_quantity_is_an_unknown_number(self):
+        ws = Workspace(read("Rosa has 9 crayons and gets a few boxes of 11 crayons. How many crayons does Rosa have?"))
+        self.assertIs(ws.fact("N2").value, UNKNOWABLE)
+        self.assertEqual(ws.fact("N2").text, "a few")
+        s1 = ws.run(Step("mul", ("N2", "N3")))
+        self.assertIs(s1, UNKNOWABLE)  # anything built from it is unknown too
+        self.assertIs(ws.apply(Step("mul", ("N2", "N3")), s1).run(Step("add", ("N1", "S1"))), UNKNOWABLE)
+
+    def test_not_enough_information_is_its_own_outcome(self):
+        answerable = Task(1, (), 1e-6, 5.0, "", False, question="?")
+        missing = Task(2, (), 1e-6, None, "", False, question="?", answerable=False)
+        self.assertEqual(verdict(missing, UNKNOWABLE), "right")
+        self.assertEqual(verdict(missing, 5), "wrong")
+        self.assertEqual(verdict(answerable, UNKNOWABLE), "wrong")
+        self.assertEqual(verdict(answerable, None), "abstain")
+
+
 class WorldTest(unittest.TestCase):
+    def test_asides_and_missing_numbers(self):
+        world = RoomWorld(RoomScenario(n_train=0, n_per_test_split=30, seed=2))
+        tests = world.test_tasks(0)
+        distract = [t for t in tests if t.split == "distract"]
+        missing = [t for t in tests if t.split == "missing"]
+        self.assertTrue(all(t.answerable and t.target is not None for t in distract))
+        self.assertTrue(all(not t.answerable and t.target is None for t in missing))
+        self.assertTrue(all(t.family in INCOMPLETE_TEST for t in missing))
+        self.assertFalse(INCOMPLETE_TRAIN & INCOMPLETE_TEST)
+        # the hidden reference skips the aside: running it gives the answer
+        for t in distract:
+            ws = Workspace(read(t.question))
+            for step in program_to_steps(t.solution):
+                ws = ws.apply(step, ws.run(step))
+            self.assertAlmostEqual(float(ws.answer), t.target)
+
     def test_every_family_grounds_and_runs(self):
         world = RoomWorld(RoomScenario(seed=3))
         for fam in FAMILIES:
@@ -63,7 +108,7 @@ class RoomTest(unittest.TestCase):
 
     def test_it_learns_from_answers_alone(self):
         tasks = list(RoomWorld(RoomScenario(n_train=600, seed=0)).train_stream())
-        late = [r.answer is not None and t.is_correct(float(r.answer)) for t, r in zip(tasks[-200:], self.rows[-200:])]
+        late = [verdict(t, r.answer) == "right" for t, r in zip(tasks[-200:], self.rows[-200:])]
         self.assertGreater(sum(late) / len(late), 0.4)
 
     def test_a_worked_solution_with_its_deliberation(self):
@@ -83,6 +128,42 @@ class RoomTest(unittest.TestCase):
         self.assertIsNot(room.outsider(scene), room.folds[room.fold(scene)])
         self.assertEqual(len(room.benches), 3)
         self.assertEqual(len(self.room.benches), 1)
+
+
+class ProcedureTest(unittest.TestCase):
+    PCT = ["mul(N1,N2)", "div(S1,K100)", "add(N1,S2)"]  # b increased by p percent
+
+    def test_recurring_pieces_are_found_and_abstracted(self):
+        prog = procedures.tree([Step.parse(t) for t in self.PCT])
+        bodies = {b for b, _ in procedures.fragments(prog)}
+        self.assertIn(("div", ("mul", ("$", 0), ("$", 1)), ("K", 100)), bodies)  # "percent of", constant kept
+        self.assertIn(("add", ("$", 0), ("div", ("mul", ("$", 0), ("$", 1)), ("K", 100))), bodies)  # same fact, same parameter
+
+    def test_a_procedure_runs_rewrites_and_reads_back_as_its_operations(self):
+        pct = procedures.make(("div", ("mul", ("$", 0), ("$", 1)), ("K", 100)), (("num",), ("num",)))
+        from synod.room.workspace import register
+        register(pct)
+        scene = Scene("What is 200 increased by 15 percent?")
+        path = procedures.replay_path(scene, tuple(self.PCT), [pct])
+        self.assertEqual([s.token for _, s in path], [f"{pct.name}(N1,N2)", "add(N1,S1)", "answer"])
+        self.assertEqual(path[-1][0].answer, Fraction(230))
+        # method comparisons see through it
+        self.assertEqual(steps_to_program([s for _, s in path]), steps_to_program([Step.parse(t) for t in self.PCT]))
+        self.assertIn("invented", say(path[0][0], path[0][1]))
+
+    def test_adopting_a_procedure_gives_it_an_expert_and_a_word(self):
+        room = make_room(n_neural=2, seed=0)
+        n = len(room.experts)
+        proc = procedures.make(("div", ("mul", ("$", 0), ("$", 1)), ("K", 100)), (("num",), ("num",)))
+        room.adopt(proc)
+        self.assertEqual(len(room.experts), n + 1)
+        self.assertIn(proc.name, room.full.by_name)
+        neural = [e for e in room.full.experts if isinstance(e, NeuralExpert)]
+        self.assertTrue(all(proc.name in e.tokens and e.net.W2.shape[1] == len(e.tokens) for e in neural))
+        PROCS.pop(proc.name, None)
+        again = pickle.loads(pickle.dumps(room))  # loading a room re-registers what it invented
+        self.assertIn(proc.name, PROCS)
+        self.assertEqual(len(again.procedures), 1)
 
 
 if __name__ == "__main__":

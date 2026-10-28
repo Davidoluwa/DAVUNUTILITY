@@ -1,7 +1,7 @@
 """Render the room's work as a worked solution with its deliberation."""
 from __future__ import annotations
 
-from .workspace import STOP, fmt, say
+from .workspace import INSUFFICIENT, STOP, UNKNOWABLE, fmt, say
 
 
 def _who(c, top=4) -> str:
@@ -24,7 +24,7 @@ def render(task, res, alternatives: int = 2, reasons: bool = True, judge=None) -
     for n, (m, k) in enumerate(res.route.trail, 1):
         c = m.cands[k]
         g = m.gates[k + 1]
-        label = "Done" if c.step.op == STOP else f"Step {n}"
+        label = "Done" if c.step.op == STOP else "Stop" if c.step.op == INSUFFICIENT else f"Step {n}"
         what = say(m.ws, c.step, c.value)
         lines.append(f"  {label}: {what}")
         lines.append(f"      {c.token}   judge {g:.2f}   backed by {_who(c)}")
@@ -42,13 +42,16 @@ def render(task, res, alternatives: int = 2, reasons: bool = True, judge=None) -
                                                                         if m.gates[0] >= 0.01 else [])))
     other = [f"{fmt(v)} ({p:.2f}, {r} route{'s' if r > 1 else ''})" for v, p, r in res.answers[1:3]]
     routes = res.answers[0][2] if res.answers else 0
-    known = getattr(task, "target", None) is not None
+    answerable = getattr(task, "answerable", True)
+    known = getattr(task, "target", None) is not None or not answerable
     truth = ""
     if known:
-        ok = res.answer is not None and abs(float(res.answer) - task.target) <= 1e-6 * max(1, abs(task.target))
-        truth = f"  [truth {fmt(task.target)}{': correct' if ok else ': WRONG' if res.answer is not None else ''}]"
+        from .room import verdict
+        v = verdict(task, res.answer)
+        truth = f"  [truth {fmt(task.target if answerable else UNKNOWABLE)}" \
+                f"{': correct' if v == 'right' else ': WRONG' if v == 'wrong' else ''}]"
     if res.answer is None:
-        best = fmt(res.route.ws.answer)
+        best = fmt(res.route.outcome)
         lines.append(f"  => abstains: best answer {best} only reached {res.probability:.2f} (needs {res.threshold:.2f}){truth}")
     else:
         lines.append(f"  => {fmt(res.answer)}   probability {res.probability:.2f}"

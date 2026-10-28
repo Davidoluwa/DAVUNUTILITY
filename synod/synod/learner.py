@@ -9,6 +9,8 @@ adapting when the world changes.
 from __future__ import annotations
 
 import math
+from itertools import repeat
+from operator import mul
 
 
 class SparseLogLinear:
@@ -18,17 +20,19 @@ class SparseLogLinear:
         self.g2: dict = {}
 
     def score(self, feats: dict) -> float:
-        w = self.w
-        return sum(w.get(f, 0.0) * v for f, v in feats.items())
+        return sum(map(mul, map(self.w.get, feats, repeat(0.0)), feats.values()))
 
     def step(self, feats: dict, grad: float) -> None:
         """One gradient step, where grad = dLoss/dScore for this feature vector."""
+        W, G2 = self.w, self.g2
+        wget, gget = W.get, G2.get
+        l2, decay, lr, sqrt = self.l2, self.decay, self.lr, math.sqrt
         for f, v in feats.items():
-            w = self.w.get(f, 0.0)
-            g = grad * v + self.l2 * w
-            acc = self.decay * self.g2.get(f, 0.0) + g * g
-            self.g2[f] = acc
-            self.w[f] = w - self.lr * g / math.sqrt(1.0 + acc)
+            w = wget(f, 0.0)
+            g = grad * v + l2 * w
+            acc = decay * gget(f, 0.0) + g * g
+            G2[f] = acc
+            W[f] = w - lr * g / sqrt(1.0 + acc)
 
     def reasons(self, feats: dict, top: int = 4):
         """The features pushing this score hardest, as (feature, contribution)."""
