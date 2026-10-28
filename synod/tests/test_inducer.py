@@ -61,13 +61,15 @@ class InducerNodeTest(unittest.TestCase):
         self.assertTrue(any("x[n-1] + x[n-2]" in rule for rule, _ in node.describe_knowledge()))
         self.assertLess(costs[-1], costs[0])
 
-    def test_critique_rejects_with_counter(self):
+    def test_critic_reports_signals_not_vetoes(self):
+        from synod.nodes.critic import CriticNode
         from synod.protocol import Proposal
-        node = InducerNode(seed=0)
         v = view([3, 6, 12, 24, 48, 96, 192, 384])
-        verdict = node.critique(v, Proposal("other", "neural", 760.0, 0.8, 0.0, "guess"))
-        self.assertFalse(verdict.endorses)
-        self.assertAlmostEqual(verdict.counter.value, 768)
+        verdict = CriticNode(seed=0).critique(v, Proposal("other", "neural", 300.0, 0.8, 0.0, "guess"))
+        self.assertTrue(verdict.evidence)
+        self.assertTrue(any(":broken:" in s for s in verdict.evidence))
+        # untrained: no constraint is trusted yet, so it takes no side
+        self.assertIsNone(verdict.endorses)
 
     def test_bias_fault_and_clear(self):
         node = InducerNode(seed=0)

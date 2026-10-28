@@ -10,6 +10,11 @@ def _num(v: float) -> str:
     return f"{v:.4g}"
 
 
+def _reason(feature: str, weight: float) -> str:
+    sign = "+" if weight >= 0 else "−"
+    return f"{sign}{abs(weight):.1f} {feature}"
+
+
 def render(task, rec) -> str:
     if task.question:
         hidden = f"  (hidden type: {task.family})" if task.family else ""
@@ -17,36 +22,46 @@ def render(task, rec) -> str:
     else:
         hist = ", ".join(_num(v) for v in task.history)
         lines = [f"task #{task.id}  [{hist}, ?]  tolerance ±{task.tolerance:.2g}  (hidden family: {task.family})"]
-    if rec.view.pressure > 0:
-        lines.append(f"  system pressure {rec.view.pressure:.2f} -> everyone is more cautious")
+    note = rec.notes.get("council", {})
+    routed = note.get("routed", {})
+
+    # who was consulted
     for d in rec.declined:
-        lines.append(f"  {d.node:9s} declines: {d.reason}")
-    for b in rec.bids:
-        lines.append(f"  {b.node:9s} bids p={b.p_success:.2f} (calibrated {b.p_mean:.2f}), needs {b.cost:.1f} more compute")
+        lines.append(f"  {d.node:9s} not consulted ({d.reason})")
+    gate = {(c["node"]): c for c in note.get("candidates", [])}
     for p in rec.proposals:
-        lines.append(f"  -> {p.node} leads: {_num(p.value)}  conf {p.confidence:.2f}  because {p.rationale}")
-        for r in rec.reviews:
-            if r.proposal is not p:
-                continue
-            v = r.verdict
-            verdict = "abstains" if v.endorses is None else ("endorses" if v.endorses else "REJECTS")
-            note = ""
-            if v.endorses and r.belief_after < r.belief_before:
-                note = "  [this reviewer endorses nearly everything here, so a yes means little]"
-            lines.append(f"     {p.node} asks {r.reviewer} for review -> {verdict}: {v.rationale}"
-                         f"   (belief {r.belief_before:.2f} -> {r.belief_after:.2f}){note}")
-            if v.counter is not None:
-                lines.append(f"     {r.reviewer} counter-proposes {_num(v.counter.value)} (conf {v.counter.confidence:.2f})")
-        if not any(r.proposal is p for r in rec.reviews):
-            lines.append(f"     {p.node} skips review (not worth the compute at this confidence)")
+        pi = routed.get(p.node)
+        route = f"router {pi:.0%}" if pi is not None else ""
+        if p.value != p.value:
+            lines.append(f"  {p.node:9s} consulted ({route}): nothing to offer")
+            continue
+        g = gate.get(p.node, {}).get("gate")
+        lines.append(f"  {p.node:9s} consulted ({route}): {_num(p.value)}  self-confidence {p.confidence:.2f}"
+                     + (f"  gate {g:.2f}" if g is not None else "") + f"  because {p.rationale}")
+
+    # what the reviewers reported
+    for r in rec.reviews:
+        lines.append(f"     {r.reviewer} on {_num(r.proposal.value)}: {r.verdict.rationale}")
+
+    # the judge
+    if note.get("groups"):
+        pooled = "  ".join(f"{_num(gr['value'])} ← {'+'.join(gr['nodes'])}: {gr['p']:.2f}" for gr in note["groups"])
+        lines.append(f"  judge: {pooled}   none of these: {note.get('none', 0):.2f}   (deliver at ≥ {note.get('threshold', 0.5):.2f})")
+        if rec.final is not None:
+            why = next((c["reasons"] for c in note["candidates"] if c["node"] == rec.final.node), [])
+            if why:
+                lines.append("     why it trusted " + rec.final.node + ": " + ", ".join(_reason(f, w) for f, w in why))
+        elif note.get("none_reasons"):
+            lines.append("     why it held back: " + ", ".join(_reason(f, w) for f, w in note["none_reasons"]))
+
     known = task.target is not None
     truth = f"truth {_num(task.target)}" if known else "no answer key"
     if rec.final is None:
-        lines.append(f"  => council abstains (no answer it believes enough)   [{truth}]")
+        lines.append(f"  => council abstains   [{truth}]")
     else:
         mark = (": correct" if task.is_correct(rec.final.value) else ": WRONG") if known else ""
-        lines.append(f"  => answers {_num(rec.final.value)} from {rec.final.node} (belief {rec.final_belief:.2f})"
+        lines.append(f"  => answers {_num(rec.final.value)} from {rec.final.node} (probability {rec.final_belief:.2f})"
                      f"  [{truth}{mark}]  compute {rec.cost:.1f}")
     if rec.certified is not None:
-        lines.append("     (unlabeled task: answer certified as teaching signal for the others)")
+        lines.append("     (confident enough to teach the members from this answer)")
     return "\n".join(lines)

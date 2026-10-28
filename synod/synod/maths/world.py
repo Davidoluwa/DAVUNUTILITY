@@ -21,7 +21,7 @@ from statistics import median
 import numpy as np
 
 from ..protocol import Task
-from .mathlang import context, read
+from .mathlang import context, features, read
 
 # ---------------------------------------------------------------------------
 # Phrasings: (train, held_out)
@@ -369,7 +369,7 @@ class MathWorld:
     def _task(self, tid, q, ans, fam, labeled, split):
         r = read(q)
         return Task(tid, (), 1e-6 * max(1.0, abs(float(ans))), float(ans), fam, labeled,
-                    question=q, context=context(r), split=split)
+                    question=q, context=context(r), split=split, features=features(r))
 
     def kinds(self):
         base = list(P) + ["unit_up", "unit_down"]

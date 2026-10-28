@@ -95,7 +95,7 @@ class Envelope(Constraint):
 class CriticNode(Node):
     kind = SYMBOLIC
     solves = False
-    veto_at = 0.9
+    trusted_at = 0.9
 
     def __init__(self, name: str = "critic", seed: int = 0, check_cost: float = 0.06):
         super().__init__(name, seed)
@@ -104,24 +104,26 @@ class CriticNode(Node):
         self.reliability = Competence(prior_mean=0.8, strength=4.0, decay=0.995)
         self.check_cost = check_cost
 
-    def review_cost(self, view) -> float:
-        return 0.1 + self.check_cost * len(self.constraints)
-
     def critique(self, view, proposal) -> Verdict:
+        """Report every applicable constraint: kept or broken, and whether its
+        track record here makes it one I'd stand behind."""
         h, v, tol = view.history, proposal.value, view.tolerance
         sig = view.context
-        cost = self.review_cost(view)
-        live = [c for c in self.constraints if c.applies(h)]
-        trusted = [(c, self.reliability.mean((c.name,) + sig)) for c in live]
-        trusted = [(c, r) for c, r in trusted if r >= self.veto_at]
-        if not trusted:
-            return Verdict(self.name, self.kind, None, cost, "no constraint I trust applies here")
-        broken = [(c, r) for c, r in trusted if not c.holds(h, v, tol)]
-        if broken:
-            c, r = max(broken, key=lambda cr: cr[1])
-            return Verdict(self.name, self.kind, False, cost, f"violates '{c.name}' (holds {r:.0%} of the time here)")
-        names = ", ".join(c.name for c, _ in trusted)
-        return Verdict(self.name, self.kind, True, cost, f"consistent with {names}")
+        signals, broken_trusted, any_trusted = [], [], False
+        for c in self.constraints:
+            if not c.applies(h):
+                continue
+            rel = self.reliability.mean((c.name,) + sig)
+            ok = c.holds(h, v, tol)
+            trust = "trusted" if rel >= self.trusted_at else "weak"
+            any_trusted |= trust == "trusted"
+            signals.append(f"{c.name}:{'kept' if ok else 'broken'}:{trust}")
+            if trust == "trusted" and not ok:
+                broken_trusted.append(c.name)
+        cost = 0.1 + self.check_cost * len(self.constraints)
+        endorses = None if not any_trusted else not broken_trusted
+        why = ", ".join(x.replace(":", " ", 1) for x in signals) or "no constraint applies"
+        return Verdict(self.name, self.kind, endorses, cost, why, evidence=tuple(signals))
 
     def learn(self, view, value, source, record) -> None:
         if source != "label":

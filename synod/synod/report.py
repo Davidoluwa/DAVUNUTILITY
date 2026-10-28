@@ -61,28 +61,28 @@ def showcase(transcripts):
     def ok(task, rec):
         return rec.final is not None and task.is_correct(rec.final.value)
 
+    def split(r):  # the judge had rival answers to choose between
+        return len(r.notes.get("council", {}).get("groups", [])) > 1
+
     picks = [
-        ("A symbolic law, no review needed", lambda t, r: ok(t, r) and r.final.node == "inducer"
-         and "concept" in r.final.rationale and not r.reviews),
-        ("Memory covers a known shape; others don't bother looking", lambda t, r: ok(t, r)
-         and r.final.node == "recall" and any("already covered" in d.reason for d in r.declined)),
+        ("A symbolic law the judge trusts on sight", lambda t, r: ok(t, r) and r.final.node == "inducer"
+         and "concept" in r.final.rationale),
+        ("The router skips a member that rarely helps here", lambda t, r: ok(t, r) and any(
+            "router" in d.reason for d in r.declined)),
         ("Neural intuition handles a noisy nonlinear series", lambda t, r: ok(t, r)
          and r.final.node == "intuition" and t.family in ("saturating", "wave")),
-        ("Escalation: a weak lead hands over to a stronger node", lambda t, r: ok(t, r) and len(r.proposals) > 1
-         and r.final is r.proposals[-1] and not t.is_correct(r.proposals[0].value)),
-        ("A reviewer overrules the lead with a better answer", lambda t, r: ok(t, r) and any(
-            rv.verdict.counter is r.final for rv in r.reviews) and not t.is_correct(r.reviews[0].proposal.value)),
-        ("Peer review raises the council's confidence", lambda t, r: ok(t, r) and any(
-            rv.verdict.endorses and rv.belief_after > rv.belief_before + 0.05 for rv in r.reviews)),
+        ("Members disagree; the judge picks the right one", lambda t, r: ok(t, r) and split(r)),
         ("Honest abstention instead of a wrong answer", lambda t, r: r.final is None and r.proposals
-         and not t.is_correct(r.proposals[0].value)),
+         and not any(p.value == p.value and t.is_correct(p.value) for p in r.proposals)),
         ("Inducer quarantined: the others cover what they can", lambda t, r: 1285 <= t.id < 1400
          and t.family in exact and r.final is not None and r.final.node != "inducer"),
     ]
-    out = []
+    out, used = [], set()
     for title, test in picks:
-        hit = _pick(transcripts, test, after=1285 if "quarantined" in title else 300)
+        hit = _pick(transcripts, lambda t, r, test=test: t.id not in used and test(t, r),
+                    after=1285 if "quarantined" in title else 300)
         if hit:
+            used.add(hit[0].id)
             out.append((title, render(*hit)))
     return out
 
@@ -98,8 +98,8 @@ def detail_run(seed: int = 0):
     for task, rec in r.transcripts.values():
         for rv in rec.reviews:
             v = rv.verdict.endorses
-            verdict = "abstained" if v is None else ("endorsed" if v else "rejected")
-            truth = "lead right" if task.is_correct(rv.proposal.value) else "lead wrong"
+            verdict = "no trusted constraint" if v is None else ("all trusted kept" if v else "a trusted one broken")
+            truth = "candidate right" if task.is_correct(rv.proposal.value) else "candidate wrong"
             reviews[(rv.reviewer, verdict, truth)] += 1
     inducer, critic = by["inducer"], by["critic"]
     approx_ctx = [sig for sig in list(inducer.exact_exists._c) if len(sig) == 4
@@ -185,8 +185,9 @@ def write_report(table, detail, seeds, path):
     for name, rel, n in detail["constraints"]:
         L.append(f"- {name}: {_pct(rel)} (evidence {n:.0f})")
 
-    L.append("\n## Peer review outcomes (seed 0)\n")
-    L.append("| reviewer | verdict | lead was | count |")
+    L.append("\n## What the critic reported (seed 0)\n")
+    L.append("The critic reports signals on every candidate; the judge learns what they're worth.\n")
+    L.append("| reviewer | signal | candidate was | count |")
     L.append("|---|---|---|---|")
     for (who, verdict, truth), n in sorted(detail["reviews"].items()):
         L.append(f"| {who} | {verdict} | {truth} | {n} |")

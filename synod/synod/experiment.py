@@ -34,8 +34,8 @@ STRATEGIES = {
     "neural-only": lambda nodes: FixedPipeline(nodes, lambda v: "intuition"),
     "symbolic-only": lambda nodes: FixedPipeline(nodes, lambda v: "inducer"),
     "hand-written gate": lambda nodes: FixedPipeline(nodes, hand_written_gate),
-    "synod w/o review": lambda nodes: Council(nodes, config=CouncilConfig(reviews=False)),
-    "synod w/o trust": lambda nodes: Council(nodes, config=CouncilConfig(trust=False)),
+    "synod w/o task features": lambda nodes: Council(nodes, config=CouncilConfig(task_features=False)),
+    "synod w/o reviewers": lambda nodes: Council(nodes, config=CouncilConfig(verifiers=False)),
     "synod w/o exchange": lambda nodes: Council(nodes, config=CouncilConfig(exchange=False)),
     "synod w/o self-healing": lambda nodes: Council(nodes, config=CouncilConfig(healing=False)),
 }
@@ -106,7 +106,7 @@ def run(name: str, seed: int = 0, scenario: Scenario | None = None, keep_transcr
             "final": rec.final.node if delivered else "abstain",
             "belief": rec.final_belief, "reviews": len(rec.reviews), "catches": catches,
             "false_alarms": false_alarms, "proposals": len(rec.proposals),
-            "pressure": rec.view.pressure, "certified": rec.certified is not None,
+            "certified": rec.certified is not None,
             "reviewers": tuple(r.reviewer for r in rec.reviews),
         })
         if t in keep_transcripts:

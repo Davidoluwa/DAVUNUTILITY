@@ -5,6 +5,7 @@ import argparse
 import os
 import time
 
+from .experiment import STRATEGIES
 from .report import compare, detail_run, export_json, write_report
 
 
@@ -16,7 +17,7 @@ def main() -> None:
     args = ap.parse_args()
     started = time.time()
     seeds = list(range(args.seeds))
-    print(f"running {args.seeds} seed(s) x 8 strategies ...", flush=True)
+    print(f"running {args.seeds} seed(s) x {len(STRATEGIES)} strategies ...", flush=True)
     table = compare(seeds, args.processes)
     detail = detail_run(0)
     report = os.path.join(args.out, "REPORT.md")

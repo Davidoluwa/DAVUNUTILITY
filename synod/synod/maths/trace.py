@@ -2,8 +2,9 @@
 
 Nothing here changes behaviour. For each question it captures how the notation
 was read, what every node privately computed (on a throwaway copy, so the real
-deliberation is untouched), the auction, every review and belief change, and
-the final weighing of candidates. The result is plain JSON for the viewer.
+deliberation is untouched), whom the learned router asked and why, what the
+reviewers reported, and how the learned judge weighed the candidates, with its
+strongest reasons in plain words. The result is plain JSON for the viewer.
 """
 from __future__ import annotations
 
@@ -14,12 +15,11 @@ import os
 
 import numpy as np
 
-from ..council import Council
 from ..protocol import Task
 from .exam import EXAM, freeze, train_curriculum_only
-from .mathlang import context, read
-from .nodes import featurize, feature_strings, numeric_features  # noqa: F401  (numeric_features kept for parity)
-from .programs import describe, matches, primitives, run
+from .mathlang import context, features, read
+from .nodes import featurize, feature_strings
+from .programs import describe, run
 
 
 def _f(v):
@@ -137,11 +137,70 @@ def checker_view(node, view, r):
     for c in node.CHECKS:
         if node._applies(c, r):
             rel = node.reliability.mean((c,) + view.context + (r.skeleton,))
-            checks.append({"check": c, "reliability": round(rel, 3), "trusted": rel >= node.veto_at})
+            checks.append({"check": c, "reliability": round(rel, 3), "trusted": rel >= node.trusted_at})
     return {"checks": checks}
 
 
 INNER = {"parser": parser_view, "reader": reader_view, "estimator": estimator_view, "checker": checker_view}
+
+
+# ---------------------------------------------------------------- the judge's features, in words
+def _tok(t):
+    if t.startswith("w:"):
+        return f"the word '{t[2:]}'"
+    if t.startswith("ctx:"):
+        return f"shape {t[4:]}"
+    return t
+
+
+def _signal(tag):
+    parts = tag.split(":")
+    if len(parts) == 3:
+        return f"{parts[0]} {parts[1]} ({parts[2]})"
+    if len(parts) == 2:
+        return f"{parts[0]} {parts[1]}"
+    return {"endorse": "it's fine", "reject": "something's off", "abstain": "can't judge"}.get(tag, tag)
+
+
+def readable(feature):
+    """The judge's (and router's) learned features, in plain words."""
+    p = feature.split("|")
+    k = p[0]
+    try:
+        if k == "null":
+            return "baseline caution"
+        if k == "b":
+            return f"{p[1]}'s overall record"
+        if k == "cl":
+            return f"{p[1]}'s self-confidence"
+        if k == "cb":
+            lo = int(p[2]) * 10
+            return f"{p[1]} saying it's {lo}-{lo + 9}% sure"
+        if k == "nc":
+            return f"{p[2]} different answer{'s' if p[2] != '1' else ''} on the table"
+        if k == "e":
+            return f"{p[1]}'s evidence: {p[2].replace('/', ' · ')}"
+        if k == "x":
+            return (f"caution on questions with {_tok(p[2])}" if p[1] == "null"
+                    else f"{p[1]} on questions with {_tok(p[2])}")
+        if k == "ex":
+            return f"{p[1]} ({p[2].replace('/', ' · ')}) on questions with {_tok(p[3])}"
+        if k in ("with", "vs"):
+            rel = "agrees" if k == "with" else "disagrees"
+            return f"{p[2]} {rel}" + (f" ({p[3].replace('/', ' · ')})" if len(p) > 3 else "")
+        if k == "ag":
+            return {"0": "nobody else agrees", "1": "one other member agrees"}.get(p[2], f"{p[2]} others agree")
+        if k == "v":
+            return f"{p[2]} on {p[1]}'s answer: {_signal(p[3])}"
+        if k == "has":
+            return f"caution when {p[2]} offers {p[3].replace('/', ' · ')}"
+    except (IndexError, ValueError):
+        pass
+    return feature
+
+
+def _reasons(pairs):
+    return [{"feature": f, "text": readable(f), "weight": round(w, 2)} for f, w in pairs]
 
 
 # ---------------------------------------------------------------- one question
@@ -149,7 +208,7 @@ def trace(council, question, answer=None, qid=0):
     r = read(question)
     tol = 1e-6 * max(1.0, abs(answer)) if answer is not None else 1e-6
     task = Task(qid, (), tol, None if answer is None else float(answer), "", False,
-                question=question, context=context(r), split="exam")
+                question=question, context=context(r), split="exam", features=features(r))
     view = task.view(0.0)
 
     # Private views, computed on a throwaway copy so the real run is untouched.
@@ -157,52 +216,39 @@ def trace(council, question, answer=None, qid=0):
     inner = {n.name: INNER[n.name](n, view, r) for n in shadow.nodes if n.name in INNER}
 
     live = copy.deepcopy(council)
-    order = [n.name for n in sorted(live.nodes, key=lambda n: n.estimate_glance_cost()) if n.solves]
-    weighings = []
-    original = Council.reconcile
+    rec = live.handle(task)
+    note = rec.notes.get("council", {})
+    declined = {d.node: d.reason for d in rec.declined}
+    cand = {c["node"]: c for c in note.get("candidates", [])}
 
-    def spy(cands, tolerance):
-        post = original(cands, tolerance)
-        weighings.append([{"node": c["prop"].node, "value": _f(c["prop"].value),
-                           "belief_before": round(c["belief"], 3), "belief_after": round(post[id(c)], 3)}
-                          for c in cands])
-        return post
+    solvers = []
+    for name, p in note.get("routed", {}).items():  # in the order the router considered them
+        prop = next((q for q in rec.proposals if q.node == name), None)
+        entry = {"node": name, "kind": live.by_name[name].kind, "p": round(p, 3), "asked": prop is not None}
+        if prop is None:
+            entry["reason"] = declined.get(name, "")
+        else:
+            c = cand.get(name)
+            entry.update({
+                "value": _f(prop.value), "confidence": round(prop.confidence, 3), "rationale": prop.rationale,
+                "evidence": [str(e) for e in prop.evidence], "compute": round(prop.cost, 2),
+                "program": describe(prop.program) if prop.program is not None else None,
+                "gate": round(c["gate"], 3) if c else None, "reasons": _reasons(c["reasons"]) if c else []})
+        solvers.append(entry)
 
-    Council.reconcile = staticmethod(spy)
-    try:
-        rec = live.handle(task)
-    finally:
-        Council.reconcile = staticmethod(original)
-
-    turns = {d.node: {"node": d.node, "action": "declined", "reason": d.reason, "compute": round(d.spent, 2)}
-             for d in rec.declined}
-    for b in rec.bids:
-        turns[b.node] = {"node": b.node, "action": "bid", "p_mean": round(b.p_mean, 3), "p_bid": round(b.p_success, 3),
-                         "council_reading": round(live.belief_in(b.node, b.p_mean), 3),
-                         "evidence": list(b.evidence), "compute": round(b.spent, 2), "needs": round(b.cost, 2)}
-    auction = [turns[n] for n in order if n in turns]
-
-    steps = []
-    for p in rec.proposals:
-        steps.append({"type": "proposal", "node": p.node, "kind": p.kind, "value": _f(p.value),
-                      "confidence": round(p.confidence, 3), "rationale": p.rationale, "evidence": list(p.evidence),
-                      "program": describe(p.program) if p.program is not None else None,
-                      "compute": round(p.cost, 2)})
-        for rv in rec.reviews:
-            if rv.proposal is not p:
-                continue
-            v = rv.verdict
-            steps.append({
-                "type": "review", "lead": p.node, "reviewer": rv.reviewer,
-                "verdict": "abstain" if v.endorses is None else ("endorse" if v.endorses else "reject"),
-                "rationale": v.rationale, "evidence": list(v.evidence),
-                "belief_before": round(rv.belief_before, 3), "belief_after": round(rv.belief_after, 3),
-                "counter": None if v.counter is None else {"node": v.counter.node, "value": _f(v.counter.value),
-                                                           "confidence": round(v.counter.confidence, 3),
-                                                           "rationale": v.counter.rationale},
-                "compute": round(rv.cost, 2)})
-    if not rec.proposals:
-        steps.append({"type": "silence"})
+    reviewers = []
+    for n in live.nodes:
+        if n.solves:
+            continue
+        mine = [x for x in rec.reviews if x.reviewer == n.name]
+        if mine:
+            reviewers.append({"node": n.name, "kind": n.kind, "asked": True, "compute": round(sum(x.cost for x in mine), 2),
+                              "signals": [{"on": _f(x.proposal.value), "by": x.proposal.node,
+                                           "rationale": x.verdict.rationale, "evidence": list(x.verdict.evidence)}
+                                          for x in mine]})
+        else:
+            reviewers.append({"node": n.name, "kind": n.kind, "asked": False,
+                              "reason": declined.get(n.name, "nothing to review")})
 
     final = rec.final
     verdict = None
@@ -211,9 +257,11 @@ def trace(council, question, answer=None, qid=0):
     return {
         "id": qid, "question": question, "answer": _f(answer) if answer is not None else None,
         "reading": reading_of(r), "context": list(view.context), "inner": inner,
-        "auction": auction, "steps": steps,
-        "weighing": weighings[-1] if weighings else [],
-        "threshold": round(live.objective.deliver_threshold(view.pressure), 3),
+        "solvers": solvers, "reviewers": reviewers,
+        "judge": {"groups": [{"value": _f(g["value"]), "p": round(g["p"], 3), "nodes": g["nodes"]}
+                             for g in note.get("groups", [])],
+                  "none": round(note.get("none", 1.0), 3), "none_reasons": _reasons(note.get("none_reasons", []))},
+        "threshold": round(note.get("threshold", live.objective.deliver_threshold(0.0)), 3),
         "final": None if final is None else {"node": final.node, "value": _f(final.value),
                                              "belief": round(rec.final_belief, 3)},
         "verdict": verdict, "compute": round(rec.cost, 2),
@@ -223,7 +271,11 @@ def trace(council, question, answer=None, qid=0):
 def knowledge(council):
     by = council.by_name
     parser, reader = by["parser"], by["reader"]
+    # The judge's strongest learned trust rules (features that don't depend on the question).
+    general = [(f, w) for f, w in council.judge.w.items() if f.split("|")[0] in ("b", "cb", "e", "v", "ag", "nc", "null", "with", "vs")]
+    general.sort(key=lambda fw: -fw[1])
     return {
+        "judge": {"features": len(council.judge.w), "trusts": _reasons(general[:8]), "doubts": _reasons(general[::-1][:8])},
         "parser": {"wordings": len(parser.memory), "meanings": parser.meanings(3)},
         "reader": {"programs": len(reader.programs), "structures": len(reader.structures)},
         "estimator": {"examples": len(by["estimator"].buffer)},

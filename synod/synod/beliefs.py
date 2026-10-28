@@ -1,7 +1,6 @@
 """The small Bayesian building blocks every node is made of.
 
-* ``Competence``   - "how often am I (or a peer) right in situations like this?"
-* ``ClaimCalibrator`` - "when that peer says 90%, how often is it actually right?"
+* ``Competence``   - "how often am I right in situations like this?"
 * ``DriftMonitor`` - "am I suddenly worse than I think I am?"
 """
 from __future__ import annotations
@@ -58,55 +57,6 @@ class Competence:
     def humble(self, factor: float) -> None:
         """Shrink all evidence: keep the shape of beliefs, drop the certainty."""
         self._c = {k: (a * factor, b * factor) for k, (a, b) in self._c.items()}
-
-
-CLAIM_EDGES = (0.0, 0.2, 0.4, 0.6, 0.8, 0.9, 0.95, 0.99, 1.0 + 1e-9)
-
-
-def claim_bin(p: float) -> int:
-    for i in range(len(CLAIM_EDGES) - 1):
-        if p < CLAIM_EDGES[i + 1]:
-            return i
-    return len(CLAIM_EDGES) - 2
-
-
-class ClaimCalibrator:
-    """One node's model of how much to believe each peer's stated confidence.
-
-    With no evidence a claim is taken at face value. As outcomes arrive, the
-    observed hit-rate for that peer at that confidence level takes over. A
-    well-calibrated peer is believed exactly; an overconfident or broken peer is
-    discounted quickly. This is what "trust" means in Synod.
-    """
-
-    def __init__(self, strength: float = 4.0, decay: float = 0.9):
-        self.strength = strength
-        self.decay = decay
-        self._c: dict = {}
-
-    def adjust(self, peer: str, claim: float) -> float:
-        a, b = self._c.get((peer, claim_bin(claim)), (0.0, 0.0))
-        return (a + self.strength * claim) / (a + b + self.strength)
-
-    def update(self, peer: str, claim: float, correct: bool, weight: float = 1.0) -> None:
-        k = (peer, claim_bin(claim))
-        a, b = self._c.get(k, (0.0, 0.0))
-        y = 1.0 if correct else 0.0
-        self._c[k] = (a * self.decay + weight * y, b * self.decay + weight * (1.0 - y))
-
-    def forget(self, peer: str) -> None:
-        self._c = {k: v for k, v in self._c.items() if k[0] != peer}
-
-    def trust(self, peer: str) -> float:
-        """Summary score in [0, 1]: 1 - usage-weighted calibration gap."""
-        num = den = 0.0
-        for (p, i), (a, b) in self._c.items():
-            if p != peer or a + b < 1e-9:
-                continue
-            centre = 0.5 * (CLAIM_EDGES[i] + min(CLAIM_EDGES[i + 1], 1.0))
-            num += (a + b) * abs(a / (a + b) - centre)
-            den += a + b
-        return 1.0 if den == 0 else max(0.0, 1.0 - num / den)
 
 
 class DriftMonitor:

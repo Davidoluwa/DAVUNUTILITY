@@ -29,7 +29,7 @@ import numpy as np
 
 from ..beliefs import Competence, conf_bucket, erf_conf
 from ..node import Node
-from ..protocol import SYMBOLIC, Proposal, Verdict
+from ..protocol import SYMBOLIC, Proposal
 
 
 @dataclass(frozen=True)
@@ -154,8 +154,6 @@ class InducerNode(Node):
     kind = SYMBOLIC
     concept_threshold = 4
     max_concepts = 6
-    glance_templates = 2
-    review_templates = 4
     approx_templates = 3
     explore_exact = 0.1
 
@@ -227,27 +225,6 @@ class InducerNode(Node):
     def _remaining_cost(self, sc) -> float:
         return sum(t.cost for t in sc["order"] if t.name not in sc["tried"])
 
-    def estimate_glance_cost(self) -> float:
-        return self.concept_cost * len(self.active_concepts()) + 0.9
-
-    # -- capabilities ----------------------------------------------------
-    def glance(self, view):
-        sc = self._state(view)
-        before = sc["spent"]
-        self._try_concepts(sc)
-        sig = view.context
-        if sc["exact"] is None and self._mode(sc, sig) == "approx":
-            # Exact laws don't live here: look at how well my favourite
-            # approximate laws fit *this* input and bid on that.
-            self._search(sc, self.approx_templates)
-            best = min(sc["approx"], key=lambda a: a.score) if sc["approx"] else None
-            bucket = conf_bucket(erf_conf(view.tolerance, best.sd)) if best else "c0"
-            return ("approx", bucket), sc["spent"] - before, 0.0
-        self._search(sc, self.glance_templates)
-        if sc["exact"] is not None:
-            return ("exact", sc["exact"].template.name), sc["spent"] - before, 0.0
-        return ("miss",), sc["spent"] - before, self._remaining_cost(sc)
-
     def _mode(self, sc, sig) -> str:
         """Decide once per task whether to hunt for exact laws or go approximate."""
         if "mode" not in sc:
@@ -293,27 +270,6 @@ class InducerNode(Node):
         prop = self._conclude(view, sc)
         prop.cost = sc["spent"] - before
         return prop
-
-    def review_cost(self, view) -> float:
-        sc = self._state(view)
-        if sc["exact"] is not None:
-            return 0.0
-        upcoming = [t for t in sc["order"] if t.name not in sc["tried"]][: self.review_templates]
-        concepts = 0.0 if sc.get("concepts_tried") else self.concept_cost * len(self.active_concepts())
-        return concepts + sum(t.cost for t in upcoming)
-
-    def critique(self, view, proposal) -> Verdict:
-        sc = self._state(view)
-        before = sc["spent"]
-        self._try_concepts(sc)
-        self._search(sc, self.review_templates)
-        cost = sc["spent"] - before
-        if sc["exact"] is None:
-            return Verdict(self.name, self.kind, None, cost, "no exact law found; cannot judge")
-        mine = self._conclude(view, sc)
-        if abs(mine.value - proposal.value) <= view.tolerance:
-            return Verdict(self.name, self.kind, True, cost, f"agrees with law {mine.rationale}")
-        return Verdict(self.name, self.kind, False, cost, f"law {mine.rationale} gives {mine.value:g}", counter=mine)
 
     # -- learning --------------------------------------------------------
     def learn(self, view, value, source, record) -> None:

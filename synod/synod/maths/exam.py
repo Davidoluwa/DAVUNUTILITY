@@ -19,7 +19,7 @@ from collections import Counter
 from ..protocol import Task
 from ..transcript import render
 from .experiment import run_maths
-from .mathlang import context, read
+from .mathlang import context, features, read
 from .world import MathScenario, MathWorld
 
 # (topic, phrasing, question, answer)
@@ -75,11 +75,10 @@ def train_curriculum_only(name: str = "synod", seed: int = 0):
 
 def freeze(orch):
     if hasattr(orch, "config"):
+        orch.config.learn = False  # router and judge stay as trained
         orch.config.exchange = False  # no learning from its own answers during the exam
         orch.config.help_budget = 0
         orch.teacher = None
-    for n in orch.nodes:
-        n.explore = False
     return orch
 
 
@@ -87,8 +86,9 @@ def sit(orch, exam=EXAM):
     """Each question is answered by a fresh copy of the frozen council."""
     out = []
     for i, (topic, phrasing, q, ans) in enumerate(exam):
+        r = read(q)
         task = Task(900_000 + i, (), 1e-6 * max(1.0, abs(ans)), float(ans), "", False,
-                    question=q, context=context(read(q)), split="exam")
+                    question=q, context=context(r), split="exam", features=features(r))
         rec = copy.deepcopy(orch).handle(task)
         given = rec.final.value if rec.final is not None else None
         verdict = "abstain" if given is None else ("right" if task.is_correct(given) else "wrong")

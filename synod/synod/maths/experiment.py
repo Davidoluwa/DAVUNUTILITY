@@ -57,6 +57,7 @@ class MathRun:
             "abstain": sum(not r["delivered"] for r in rows) / n,
             "cost": sum(r["cost"] for r in rows) / n,
             "utility": sum(r["utility"] for r in rows) / n,
+            "ceiling": sum(r["any_right"] for r in rows) / n,
         }
 
     def curve(self, width=500):
@@ -65,7 +66,7 @@ class MathRun:
 
 
 def run_maths(name: str = "synod", seed: int = 0, scenario: MathScenario | None = None, keep=None,
-              help_budget: int = 0) -> MathRun:
+              help_budget: int = 0, freeze_at_test: bool = False) -> MathRun:
     scenario = scenario or MathScenario(seed=seed)
     world = MathWorld(scenario)
     nodes = make_nodes(seed)
@@ -77,8 +78,12 @@ def run_maths(name: str = "synod", seed: int = 0, scenario: MathScenario | None 
     out = MathRun(name, nodes=nodes, orchestrator=orch)
     started = time.time()
     tasks = list(world.train_stream())
-    tasks += world.test_tasks(len(tasks))
-    for task in tasks:
+    n_train = len(tasks)
+    tasks += world.test_tasks(n_train)
+    for k, task in enumerate(tasks):
+        if freeze_at_test and k == n_train and isinstance(orch, Council):
+            orch.config.learn = False  # router and judge stay as trained
+            orch.config.exchange = False  # and nobody learns from the council's own answers
         rec = orch.handle(task)
         ok = rec.final is not None and task.is_correct(rec.final.value)
         parser_mode = next((p.evidence[0] for p in rec.all_proposals() if p.node == "parser" and p.evidence), "-")
@@ -88,6 +93,7 @@ def run_maths(name: str = "synod", seed: int = 0, scenario: MathScenario | None 
             "final": rec.final.node if rec.final is not None else "abstain", "parser_mode": parser_mode,
             "certified": rec.certified is not None,
             "asked": rec.label is not None and not task.labeled,
+            "any_right": any(p.value == p.value and task.is_correct(p.value) for p in rec.all_proposals()),
         })
         if keep is not None and keep(task):
             out.transcripts[task.id] = (task, rec)

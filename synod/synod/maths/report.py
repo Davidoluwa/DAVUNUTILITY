@@ -17,22 +17,28 @@ SPLIT_NAMES = {
     "compose": "two-step combinations never seen",
 }
 
-CONFIGS = [(name, 0) for name in STRATEGIES] + [("synod", 40)]
+# (strategy, teacher budget, freeze the council after training)
+CONFIGS = [("synod", 0, True)] + [
+    (name, 0, False) for name in STRATEGIES if not name.startswith("synod")] + [("synod", 0, False), ("synod", 40, False)]
 
 
-def label(name, budget):
-    return f"{name} + teacher (asks ≤{budget})" if budget else name
+def label(name, budget, frozen=False):
+    if not name.startswith("synod"):
+        return name
+    if frozen:
+        return f"{name} (frozen after training)"
+    return f"synod + teacher (asks ≤{budget})" if budget else "synod (keeps learning from its confident answers)"
 
 
 def _job(args):
-    name, budget, seed = args
-    r = run_maths(name, seed=seed, help_budget=budget)
-    return (name, budget, seed, {s: r.summary(s) for s in SPLITS}, r.curve(),
+    name, budget, frozen, seed = args
+    r = run_maths(name, seed=seed, help_budget=budget, freeze_at_test=frozen)
+    return (name, budget, frozen, seed, {s: r.summary(s) for s in SPLITS}, r.curve(),
             sum(x["asked"] for x in r.rows))
 
 
 def compare(seeds, processes=4):
-    jobs = [(n, b, s) for n, b in CONFIGS for s in seeds]
+    jobs = [(n, b, f, s) for n, b, f in CONFIGS for s in seeds]
     try:
         from multiprocessing import Pool
         with Pool(processes) as pool:
@@ -40,13 +46,14 @@ def compare(seeds, processes=4):
     except (OSError, ImportError):
         out = [_job(j) for j in jobs]
     table = {}
-    for n, b in CONFIGS:
-        rows = [o for o in out if o[0] == n and o[1] == b]
-        table[label(n, b)] = {
-            s: {k: float(np.mean([r[3][s][k] for r in rows])) for k in ("accuracy", "wrong", "abstain")}
+    for n, b, f in CONFIGS:
+        rows = [o for o in out if o[0] == n and o[1] == b and o[2] == f]
+        key = label(n, b, f)
+        table[key] = {
+            s: {k: float(np.mean([r[4][s][k] for r in rows])) for k in ("accuracy", "wrong", "abstain", "ceiling")}
             for s in SPLITS}
-        table[label(n, b)]["curve"] = list(np.mean([r[4] for r in rows], axis=0))
-        table[label(n, b)]["asked"] = float(np.mean([r[5] for r in rows]))
+        table[key]["curve"] = list(np.mean([r[5] for r in rows], axis=0))
+        table[key]["asked"] = float(np.mean([r[6] for r in rows]))
     return table
 
 
@@ -110,18 +117,24 @@ def write(table, det, seeds, path):
     for name, t in table.items():
         L.append(f"| {name} | " + " | ".join(f"{_p(t[s]['accuracy'])} ({_p(t[s]['wrong'])})" for s in SPLITS) + " |")
     L.append("\n" + "\n".join(f"- **{s}**: {SPLIT_NAMES[s]}" for s in SPLITS))
+    L.append("\n## How much of what its members knew did the council use?\n")
+    L.append("Ceiling = at least one consulted member proposed the right answer. The gap is the judge's to close.\n")
+    L.append("| strategy | " + " | ".join(SPLITS) + " |")
+    L.append("|---|" + "---|" * len(SPLITS))
+    for name, t in table.items():
+        if name.startswith("synod"):
+            L.append(f"| {name} | " + " | ".join(f"{_p(t[s]['accuracy'])} of {_p(t[s]['ceiling'])}" for s in SPLITS) + " |")
     teach = next(v for k, v in table.items() if "teacher" in k)
     L.append(f"\nThe teacher variant asked {teach['asked']:.0f} questions on average (out of 1250 test questions).\n")
-    L.append("Training accuracy per 500 questions (synod): " + ", ".join(_p(x) for x in table["synod"]["curve"]) + "\n")
+    L.append("Training accuracy per 500 questions (synod): " + ", ".join(
+        _p(x) for x in table["synod (frozen after training)"]["curve"]) + "\n")
     L.append("## Inside one run (seed 0, with teacher)\n")
     L.append(f"- Wordings the parser knows: {det['wordings']}; programs the reader can produce: {det['programs']}.")
     L.append(f"- Questions it asked the teacher about, by hidden type: " +
              (", ".join(f"{k} {v}" for k, v in det["asked"].most_common()) or "none") + ".")
     st = det["stats"]
-    L.append(f"- The parser adopted {st['parser'].get('wordings_learned_from_peers', 0)} new wordings from peers' answers "
-             f"after checking them itself, and turned down {st['parser'].get('peer_answers_not_corroborated', 0)} it couldn't corroborate.")
-    L.append(f"- The reader refused to teach itself from its own answers on new ground "
-             f"{st['reader'].get('skipped_own_novel_answers', 0)} times.\n")
+    L.append(f"- The parser learned {st['parser'].get('wordings_learned_from_council', 0)} new wordings from answers "
+             f"the council was confident enough to teach from.\n")
     L.append("Who answered each test set:\n")
     L.append("| test set | answered by |")
     L.append("|---|---|")

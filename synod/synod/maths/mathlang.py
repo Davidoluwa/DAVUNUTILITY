@@ -378,3 +378,10 @@ def context(reading: Reading) -> tuple:
     the numbers, and whether it's a one-liner or a little story."""
     sentences = len(re.findall(r"[.?!](?:\s|$)", reading.text.strip() + " "))
     return (reading.slots, magnitude_bucket(reading), "multi" if sentences > 1 else "single")
+
+
+def features(reading: Reading) -> tuple:
+    """Perception features for the council's learned router and judge: the
+    coarse context plus every token of the skeleton (like the token features
+    an MoE gate sees)."""
+    return tuple(f"ctx:{c}" for c in context(reading)) + tuple(sorted({f"w:{t}" for t in reading.skeleton}))

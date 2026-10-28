@@ -1,15 +1,15 @@
 # Synod architecture
 
-This is the detailed version: what every piece believes, how each decision is computed, and why.
+This is the detailed version: what every piece believes, how each decision is computed, and why. The council's decisions are learned (a router and a judge, trained like a mixture-of-experts gate); the members' self-knowledge and health are the nodes' own.
 
 ## 1. Design rules
 
-1. **No node sees the answer or the task family.** Nodes get a `TaskView` (history or question text, tolerance, system pressure, a coarse shared `context`). Labels arrive after delivery, for some tasks only.
-2. **The council has no opinions.** It runs a fixed meeting protocol. Every judgement comes from a node's learned beliefs.
-3. **One objective for everyone.** `U = +1 correct, −1 wrong, 0 abstain, −λ·compute` with λ = 0.02. A node's decisions are judged by their effect on `U`, not on its own score.
-4. **Nobody is certain.** Beliefs are capped at 0.99, so evidence can always move them.
+1. **No node sees the answer or the task family.** Nodes get a `TaskView` (history or question text, tolerance, a coarse shared `context`, and the task's `features`). Labels arrive after delivery, for some tasks only.
+2. **No hand-written decision rules in the council.** Whom to ask, whether a review is worth it and which answer to trust are learned models, trained on outcomes during training. The council only runs the steps and does the bookkeeping.
+3. **One objective for everyone.** `U = +1 correct, −1 wrong, 0 abstain, −λ·compute` with λ = 0.02. The router's consult rule and the judge's delivery threshold both come straight from it.
+4. **Only labels that arrive on their own calibrate anything.** Answers the council asked a teacher for are a biased sample (it asked exactly where it was unsure), so they teach knowledge and never train the router, the judge, or any member's self-model.
 
-## 2. Beliefs (`beliefs.py`)
+## 2. Beliefs (`beliefs.py`, `learner.py`)
 
 ### Competence: P(success | situation)
 
@@ -20,29 +20,13 @@ m_0 = prior
 m_k = (a_k + s·m_{k-1}) / (a_k + b_k + s)      for each prefix k of the key
 ```
 
-Sparse situations borrow from broader ones and specialise as evidence arrives. Counts decay on update (γ ≈ 0.995), so beliefs follow a changing world. A node keeps several of these:
+Sparse situations borrow from broader ones and specialise as evidence arrives. Counts decay on update (γ ≈ 0.995), so beliefs follow a changing world. Each node keeps `competence` over `("ctx", *sig)` and `("p", *proposal_evidence, *sig)`: how often am I right here, given what I saw? Its confidence on every proposal is read from the second key, so raw scores (ensemble spread, residual fits, memory distance) only pick a bucket and the probability is learned from outcomes (contextual histogram-binning calibration). Checkers and critics keep the same kind of model for how often each of their rules holds.
 
-| model | key | question |
-|---|---|---|
-| `competence` | `("ctx", *sig)` / `("g", *glance_evidence, *sig)` / `("p", *proposal_evidence, *sig)` | how often am I right here, given what I saw? |
-| `usefulness` | `sig` | how often does looking here end in a worthwhile bid? |
-| `review_tnr`, `review_tpr` | `(reviewer, *sig)` | P(endorse \| lead right), P(reject \| lead wrong) for each reviewer |
-| `review_answers` | `(reviewer, *sig)` | how often does that reviewer give a verdict at all? |
-| `dissent` | `(reviewer, *counter_evidence, *sig)` | when that reviewer counter-proposes, how often is it right? |
+`sig` is a coarse description of the task's shape (sequences: precision, integer/real, smooth/rough, growth; maths: slot pattern and number sizes). See `perception.py` and `maths/mathlang.py`.
 
-`sig` is a coarse, shared description of the task's shape: precision (tight/loose), integer/real, smooth/rough, growth (decaying/steady/explosive). See `perception.py`.
+### SparseLogLinear: the council's learner
 
-Because confidence comes from `competence[("p", evidence, sig)]`, raw scores (ensemble spread, residual fits, memory distance) only pick a bucket. The calibrated probability is learned from outcomes. This is histogram-binning calibration, made contextual.
-
-### ClaimCalibrator: trust
-
-Each node keeps its own map of each peer's claims, binned by stated confidence:
-
-```
-adjust(peer, c) = (hits_bin + s·c) / (n_bin + s)          (s = 4, decay 0.9)
-```
-
-With no evidence a claim is taken at face value. A calibrated peer is believed exactly. A peer whose 97% claims keep failing gets discounted within a handful of outcomes. The council's reading of any claim is the **median of the other nodes' maps**, so no node grades itself.
+The router, the judge and the reviewer-value model are each a linear model over string features (`"e|parser|analogy"`, `"x|reader|w:times"`), trained online with a per-feature Adagrad step whose accumulator decays (0.999), so it never stops adapting. `reasons()` returns the features that pushed a score hardest, which is what the transcripts and the viewer show as "why it trusted …".
 
 ### DriftMonitor
 
@@ -50,88 +34,65 @@ A one-sided CUSUM on `confidence − outcome − slack`. A calibrated node drift
 
 ## 3. The meeting (`council.py`)
 
-### 3.1 Open-outcry bidding
+### 3.1 Task features
 
-Nodes are asked in order of how cheap their glance is. Each node:
+The router and judge see the task's features: in maths, the context tokens plus every word of the question's skeleton (`w:times`, `w:remainder`, …), like the token features an MoE gate sees. In sequences, the shape signature. Switching them off (`synod w/o task features`) leaves only per-member biases.
 
-1. **Covered?** If the best bid already on the table has belief `b`, and even a perfect answer from me couldn't pay for my look:
-   `dv(1) − dv(b) < λ·glance_cost` → decline ("already covered by …").
-2. **Worth looking?** Thompson-sample `usefulness[sig]`. If `sample · 0.5 < λ·glance_cost` → decline unseen. A 5% curiosity rate, rising with system pressure, keeps sidelined nodes from being locked out forever.
-3. **Look and bid.** Glance → evidence → `p ~ Beta(competence[("g", evidence, sig)])`. Bid only if `dv(p) > λ·expected_cost`.
+### 3.2 The router and its cascade
 
-where `dv(p) = max(p·R − (1−p)·W, 0)` is the value of holding an answer you believe with probability `p` (you can always abstain), and `W = penalty·(1 + pressure)`.
+One logistic model per solver: `π_n = σ(w · f_route(n, task))`, trained with cross-entropy on whether that member's answer was right, every time it was consulted on a labeled task.
 
-### 3.2 Ranking
+Solvers are ranked by `π` and consulted in order. The next one is consulted only if its expected contribution beats its compute:
 
 ```
-merit(bid) = dv( reading(p_mean) + (p_sample − p_mean) ) − λ·cost
+P(all consulted so far are wrong) · π_n · (R + W)  ≥  λ · typical_cost_n
 ```
 
-`reading` is the peers' trust-adjusted view of the bidder's calibrated estimate. The bidder keeps its own exploration margin (Thompson sample minus mean) on top. Bids with `merit ≤ 0` are never called on, so if nobody can plausibly help, the council abstains without spending anything.
+`typical_cost_n` is a running average of what that member actually spent. On 10% of training tasks (`explore`) everyone is consulted, so the router keeps seeing what members it would have skipped would have said.
 
-### 3.3 Solving, reviewing, escalating
+### 3.3 Reviewer routing
 
-The best bidder solves. Then, as lead, it decides for itself whether to buy a review, by value of information over the available reviewers:
+Reviewers (checker, estimator, critic) report signals on each distinct candidate. Whether one is worth asking is a learned regression: on every dense, labeled training task, the council replays the judge's decision with and without that reviewer's signals and records the utility difference. The model predicts that gain from the reviewer, the task's features, how many rival answers there are, which members proposed what, and how unsure the judge already is without reviews. A reviewer is asked when the predicted gain ≥ `λ · its cost · number of candidates`.
 
-```
-P(endorse) = b·TNR + (1−b)·(1−TPR)
-b_endorse  = b·TNR / P(endorse)
-b_reject   = b·(1−TNR) / (1 − P(endorse))
-VOI        = P(ans)·[P(endorse)·dv(b_endorse) + (1−P(endorse))·dv(b_reject)] + (1−P(ans))·dv(b) − dv(b)
-ask the reviewer with the largest VOI − λ·review_cost, if positive
-```
+### 3.4 The judge
 
-Confident leads rightly skip review. Uncertain leads buy it when a reviewer has shown it can tell right from wrong in this kind of situation. A 3% curiosity rate keeps reviewer statistics fresh.
+A softmax gate over every candidate answer plus a "none of these" option. Each candidate's logit is `w · f_cand`, where the features are:
 
-A verdict says how sure the reviewer was (its `evidence`, e.g. `("unsure", "novel")`). It updates the lead's belief by Bayes, using the lead's own TPR/TNR for that reviewer, **keyed first by that evidence**, so a hesitant "no" isn't read with the weight of a confident one. A rejection may carry a **counter-proposal**, which becomes a candidate believed according to that reviewer's dissent record. Reviewers that aren't sure enough to object abstain rather than veto.
+- who proposed it (`b|node`), its self-confidence (as a value and a bucket) and every prefix of its evidence;
+- the task's features, alone and crossed with the member and its evidence head (`ex|reader|r/novel|w:times`), so trust can depend on the kind of question;
+- who agrees and who disagrees with it, with their evidence, and how many agree;
+- every reviewer signal on it (`v|parser|checker|whole-number:pass:trusted`);
+- how many rival answers are on the table.
 
-If the best candidate is still below the delivery bar, the next bidder with positive merit gets a turn (up to 3 proposals).
+"None of these" has its own features (a bias, the task's features, what was offered). Members whose answers agree within tolerance form one group and pool their gates, so the probability of an answer is the sum over its group.
 
-### 3.4 Reconciling conflicts
+Training maximises the probability of the truth: `−log Σ_{k ∈ right} g_k`, or `−log g_none` when nobody was right. The gradient on logit k is `g_k − 1[k ∈ right]·g_k / Σ_{right} g`.
 
-Two answers further apart than 2× tolerance can't both be right. Answers closer than that are grouped together and the most trusted one speaks for the group.
+### 3.5 Delivery, teaching and asking for help
 
-Each surviving belief is already *conditioned on the clash*: a rejected lead was updated by Bayes, and a counter-proposal is believed according to its author's record as a dissenter. So the beliefs are used as they are, and only rescaled if mutually exclusive answers add up to more than 100%:
+Deliver the most probable group's answer if its probability is at least `W/(R+W)` = 0.5. Otherwise abstain.
 
-```
-S = Σ_groups p_g ;   p_g ← p_g / S   if S > 1
-```
+An unlabeled answer the judge gives ≥ 0.9 (`teach_at`) becomes **certified** teaching signal. Members decide what to do with it (the inducer only takes its own exact laws; recall and intuition keep provenance so they can retract it later).
 
-(An earlier version multiplied the beliefs as if they were independent opinions, `p_i·Π_{j≠i}(1−p_j)/Z`. That counted the same disagreement twice and let a confidently wrong reviewer crush a correct, novel answer.)
+With a teacher and a budget (`help_budget`), the council asks for the answer after a question it couldn't settle: it abstained after trying, or its members proposed rival answers. Asked labels go to every member's `learn(…, "asked")` as knowledge only (rule 4).
 
-### 3.5 Delivery and certification
+### 3.6 What the record shows
 
-Deliver the top candidate if its reconciled belief is at least `W/(R+W)` (0.5 when calm, higher under pressure). Otherwise abstain.
-
-An unlabeled delivered answer with belief ≥ 0.8 is **certified** as a teaching signal only if it is a **consensus**: no review rejected it and no rival answer appeared anywhere in the deliberation. Each learner then applies its own bar: memory only learns from ≥ 0.95, the noisy-data learner from ≥ 0.8, and the inducer only from its own exact laws. In maths, the reader never teaches itself from its own answers on ground that was novel to it, and the parser only adopts a peer's answer for a new wording if its own reasoning independently reaches the same answer ("no hearsay").
-
-### 3.5b Asking for help
-
-With a teacher and a budget (`CouncilConfig.help_budget`), the council asks for the true answer when it couldn't settle a question itself: it abstained after trying, or its members proposed answers that can't both be right. It asks *after* answering, so the asked question is scored as answered. The label is then used exactly like a training label, so the next question of that shape benefits. This is self-limiting: once a wording is learned, it stops being contested and stops triggering questions.
-
-### 3.6 Pressure
-
-```
-pressure = clip((recent_error − normal_error − 0.05) / 0.2, 0, 1)
-```
-
-It measures "worse than our own normal", not an absolute error level, so a world that's just noisy doesn't make the council permanently jumpy. Under pressure, every node raises its bar for delivering, values review more, and looks at tasks more often.
+Every decision is written to `record.notes["council"]`: the router's probability for every solver, why each skipped member was skipped, each candidate's gate and top reasons, the pooled groups and the "none" weight. `transcript.py` renders it, and `maths/trace.py` turns a whole exam into the viewer.
 
 ## 4. Settlement and learning
 
-Every node sees the full transcript (`Record`). On labeled tasks:
+Every node sees the full transcript (`Record`). Before anything else, every node may post an **explanation** to `record.notes` via `explain()`. In maths, the parser posts the programs that reproduce the label, and the reader trains on them. That's how symbolic discoveries become neural skill.
 
-- its own proposals update `competence` (three keys), the regression archive, the drift monitor and the surprise check;
-- peers' proposals update its `ClaimCalibrator` (double weight if it took part) and its **concern** about that peer;
-- reviews update its reviewer models (TPR, TNR, P(answer), dissent);
-- with some probability, if it glanced but lost, it **quietly re-checks itself** on the labeled task (a shadow solve, billed as maintenance), so its self-model doesn't go stale;
-- `learn()` absorbs the label.
+On labels that arrived on their own:
 
-On certified tasks, only `learn()` runs, and only if the learner's own bar is met.
+- the router and judge take one gradient step (3.2, 3.4), and on dense tasks the reviewer-value model too (3.3);
+- each node's own proposal updates its `competence`, its regression archive, its drift monitor and its surprise check;
+- each node watches its peers: a confident failure raises its concern about that peer, and enough concern files an audit request;
+- on probation, a node quietly re-solves labeled tasks it wasn't asked about (billed as maintenance);
+- `learn(…, "label")` absorbs the label.
 
-Before any of that, every node may post an **explanation** to `record.notes` via `explain()`. In maths, the parser posts the programs that reproduce the label, and the reader trains on them. That's how symbolic discoveries become neural skill.
-
-When the council is answering rather than learning (`ask`/`chat`), nodes set `explore = False` and bid their calibrated beliefs instead of Thompson samples, so the same question gets the same answer.
+On asked labels, only `learn(…, "asked")` runs. On certified answers, only `learn(…, "certified")` runs.
 
 ## 5. Health lifecycle
 
@@ -143,13 +104,13 @@ healthy ────────────────────────
    │                                                              │ fails
    │                                          repair() succeeded? ┤
    │                    yes: probation (shadow-checks only, 12 labeled tasks) ──► healthy
-   │                    no:  quarantine (no bids, no reviews; retest every 30 tasks)
+   │                    no:  quarantine (not available to the router; retest every 30 tasks)
    │                                         retest passes → probation ──► healthy
 ```
 
 - **Self-test** is a regression test: re-solve the last 40 archived labeled cases and compare with how well the node did on them at the time.
-- On a confirmed fault the node **humbles** its self-model (shrinks all counts to 15%) and **announces** it was degraded. Every peer then drops its trust history for that node and **retracts** lessons learned from that node's certified answers in the last 120 tasks (Recall and Intuition keep provenance for this).
-- **Audits.** A peer that sees confident failures (2 within a short window, or 1 shocking one, or 1 it had explicitly rejected in review) files an audit request, and the council relays it.
+- On a confirmed fault the node **humbles** its self-model (shrinks all counts to 15%) and **announces** it was degraded. Every peer then **retracts** lessons learned from that node's certified answers in the last 120 tasks (Recall and Intuition keep provenance for this). A quarantined node isn't available, so the router simply can't ask it.
+- **Audits.** A peer that sees confident failures (2 within a short window, or 1 shocking one) files an audit request, and the council relays it.
 
 ## 6. The sequence nodes
 
@@ -158,7 +119,6 @@ healthy ────────────────────────
 - Works in a shape-only frame: `z = (window − last) / mean|Δ|`, predicting the next step.
 - Predictive spread = √(ensemble variance + learned residual noise per situation) → raw P(within tolerance) → bucket → calibrated by `competence`.
 - **Focus:** stores an example with probability `clip(2·P(I'm right here), 0.15, 1)`, so learning capacity goes where it can help. The floor lets it notice if it gets good somewhere new.
-- Review = an independent second opinion: it solves the task itself and endorses if it lands within tolerance.
 
 ### Recall (`nodes/recall.py`): neural (associative memory)
 - k-NN over normalised windows (k = 4), exact-match aware. Evidence = (distance: exact/near/mid/far, agreement: agree/split).
@@ -169,13 +129,12 @@ healthy ────────────────────────
 - A grammar of 13 law templates (constant, arithmetic, geometric, periods, interleaved, affine, recurrences of order 2–3 with or without a constant, polynomials up to cubic). Each is fitted by least squares and snapped to simple rationals. A fit is exact if the residual is ~0.
 - **Learned search order:** Dirichlet counts of confirmed laws per situation, plus a simplicity prior, decide what to try first.
 - **Concepts:** a law with specific coefficients confirmed ≥ 4 times becomes a named concept, checked first at 0.05 compute.
-- **Knows when not to reason exactly:** it learns P(an exact law exists | situation). Where that's < 5% (with 10% exploration), it switches to an approximate mode: its 3 historically best approximate laws, chosen by predictive spread with a mild Occam penalty. Its glance in that mode reports actual fit quality, so its bids are input-specific.
+- **Knows when not to reason exactly:** it learns P(an exact law exists | situation). Where that's < 5% (with 10% exploration), it switches to an approximate mode: its 3 historically best approximate laws, chosen by predictive spread with a mild Occam penalty. In that mode its evidence reports the actual fit quality, so its confidence is input-specific.
 - Every answer ships with its law as the rationale.
-- Review: re-derive from a few templates. Endorse or reject with the exact law as a counter-proposal, or abstain if no exact law is found.
 
 ### Critic (`nodes/critic.py`): symbolic
 - Constraints: keeps-direction, keeps-curvature, bounded-step, constant-growth-ratio, stays-in-envelope.
-- Learns P(reality satisfies the constraint | it applies, situation) from every label. It only vetoes using constraints at ≥ 90% reliability, so constraints that turn out to be folklore in some situation stop being used there.
+- Learns P(reality satisfies the constraint | it applies, situation) from every label. It reports every applicable constraint as kept or broken, and as trusted (≥ 90% reliable here) or weak. The judge learns what each report is worth.
 
 ## 7. The maths world (`synod/maths/`)
 
@@ -210,13 +169,13 @@ assoc(w, p) = P(p | w) · PMI(w, p)            (plain PMI over-rates rare primit
 score(prog) = Σ assigned assoc  − 1 per primitive  − 0.7 · Σ strong words left unexplained
 ```
 
-Each word may justify at most one primitive (explaining away). A word whose favourite primitive is already in the program counts as explained (synonyms). Analogies get a bonus of 2 × similarity, edits pay 0.75. The evidence the parser bids on is `(mode, closeness, margin)`, calibrated separately for each.
+Each word may justify at most one primitive (explaining away). A word whose favourite primitive is already in the program counts as explained (synonyms). Analogies get a bonus of 2 × similarity, edits pay 0.75. The evidence the parser reports is `(mode, closeness, margin)`, and its confidence is calibrated separately for each.
 
 ### 7.4 Reader, estimator, checker
 
 - **Reader:** 3 sparse MLPs (hashed unigrams and bigrams of the skeleton → softmax over discovered programs), trained on the parser's explanations. Its evidence is `(novel/familiar, agree/split, confidence)`. *Novel* means the combination of words its networks rely on (large learned input weights) has never been seen, so a new name in a word problem doesn't count but a new pairing of operation words does.
-- **Estimator:** predicts `sign·log10(1+|answer|)` from the wording and numeric features. Rejects answers outside ~2.5 learned standard deviations; abstains on unfamiliar wording.
-- **Checker:** satisfies-the-equation, whole-number, yes-or-no and inside-the-list checks, with reliability learned per check, context and wording. It vetoes only at ≥ 97%.
+- **Estimator:** predicts `sign·log10(1+|answer|)` from the wording and numeric features. Reports how far a candidate is from its guess, in its own learned standard deviations (`size:close | loose | far | way-off`), and how much of the wording it has seen (`seen:familiar | partly-new | new`).
+- **Checker:** satisfies-the-equation, whole-number, yes-or-no and inside-the-list checks, with reliability learned per check, context and wording. Reports each check as pass or fail, and as trusted (≥ 97% here) or weak.
 
 ### 7.5 Curriculum and tests
 
@@ -224,7 +183,7 @@ Each word may justify at most one primitive (explaining away). A word whose favo
 
 ### 7.6 The exam
 
-`maths/exam.py` holds 40 hand-written questions with an answer key checked by an independent unit test, plus a check that none appear word for word in training. The council is trained on the curriculum only and frozen (no certified-answer learning, no exploration, no teacher). Each question goes to a fresh copy, so order can't matter.
+`maths/exam.py` holds 40 hand-written questions with an answer key checked by an independent unit test, plus a check that none appear word for word in training. The council is trained on the curriculum only and frozen (router and judge fixed, no certified-answer learning, no teacher). Each question goes to a fresh copy, so order can't matter.
 
 ## 8. Baselines and ablations
 
@@ -232,14 +191,18 @@ Sequences (`experiment.py`):
 
 - `neural-only`, `symbolic-only`: one node does everything (same node code, same learning, same self-healing).
 - `hand-written gate`: integer-valued → inducer, else → intuition. That's the "programmatic gate".
-- `synod w/o review | trust | exchange | self-healing`: switch one mechanism off.
+- `synod w/o task features | reviewers | exchange | self-healing`: switch one mechanism off.
 
-Maths (`maths/experiment.py`): `parser alone`, `reader alone` (still trained on the parser's explanations, since it can't discover programs itself), a `hand-written gate` (parser if it knows the wording, else reader), and Synod with and without a teacher.
+Maths (`maths/experiment.py`): `parser alone`, `reader alone` (still trained on the parser's explanations, since it can't discover programs itself), a `hand-written gate` (parser if it knows the wording, else reader), and Synod frozen after training, still learning from its confident answers, and with a teacher. The maths report also gives each council's **ceiling**: how often at least one consulted member had the right answer.
+
+Every comparison between versions of the council used 10 seeds. Held-out maths types flip as a whole family, so 5-seed means can move by 5 points on noise alone.
 
 ## 9. Known limitations and next steps
 
-- **Self-knowledge doesn't transfer to harder novelty.** On never-seen maths compositions, the reader is confidently wrong. Its "novel ground" record comes from training-time novelty, which was easier. Without feedback the council can't know it's in a harder regime: alone, the parser is right 51% and never wrong there, while the council is right 10% and wrong 39%. A teacher on call fixes most of it (87%). Better unsupervised novelty and calibration is the next frontier.
-- **Bidding overhead.** A market costs compute (sequences: 2.5 units per task vs the gate's 1.1).
-- **Echo risk in self-training.** Mitigated by consensus-only certification, per-learner bars, no-hearsay corroboration, no self-teaching on novel ground, and retraction after a confirmed fault, but not eliminated.
-- **Synthetic worlds.** Both domains are generated. The protocol is domain-agnostic; nodes, `TaskView` and the answer check are where a real domain plugs in.
-- **Next:** an LLM as a neural reader and a real CAS/SMT solver as a symbolic node; the teacher replaced by a stronger model or a human; node spawning and retirement driven by marginal contribution; learned (not hand-picked) situation signatures.
+- **It doesn't know what it doesn't know.** The judge's trust was learned on the curriculum, so on questions outside it ("What is the gcd of 84 and 126?", "Calculate 15% of 80") it answers confidently and wrongly, where v1's hand-written novelty rules abstained. On never-seen combinations, 29% of answers are wrong where the parser alone is never wrong. The natural fix is to train the null option on data it can learn from: questions none of its members can answer (outlier exposure), or members held back from some question types during training so the judge sees what new ground looks like.
+- **Tried and cut: uncertainty-aware routing.** Routing on estimate + standard deviation (optimism under uncertainty), and a learned familiarity signal (how many of the question's words the council has rarely met), were both implemented and evaluated over 10 seeds. Neither beat the plain council on the new-wording test sets (0.757 and 0.743 vs 0.805), so both were removed. Familiarity did get the right member asked more often; the judge didn't exploit it.
+- **The judge is slow to drop a member that suddenly breaks.** Its Adagrad steps shrink with experience, so after the inducer's bug it keeps trusting it until the inducer quarantines itself (30% wrong in that window, vs 18% for v1's fast-decaying trust maps). Self-healing carries the fault response now.
+- **Compute.** The cascade asks several members when it's unsure (sequences: 3.2 units per task vs the gate's 1.1).
+- **Echo risk in self-training.** One rule now (teach from answers the judge gives ≥ 0.9), plus retraction after a confirmed fault. Learning from its own confident answers at test time doesn't help: word problems drop from 93% (frozen) to 89%.
+- **Synthetic worlds.** Both domains are generated. The protocol is domain-agnostic; nodes, `TaskView`, task features and the answer check are where a real domain plugs in.
+- **Next:** outlier exposure for the judge; an LLM as a neural reader and a real CAS/SMT solver as a symbolic node; the teacher replaced by a stronger model or a human; node spawning and retirement driven by how often the judge relies on each member.

@@ -25,6 +25,9 @@ class TaskView:
     question: str = ""  # natural-language tasks (e.g. maths questions)
     # Coarse, shared perception of the task's shape. Self-models condition on it.
     context: tuple = ()
+    # Finer perception features (e.g. the words of a question) for the council's
+    # learned router and judge - like token features feeding an MoE gate.
+    features: tuple = ()
 
 
 @dataclass(frozen=True)
@@ -38,22 +41,22 @@ class Task:
     question: str = ""
     context: tuple = ()
     split: str = ""
+    features: tuple = ()
 
     def view(self, pressure: float = 0.0) -> TaskView:
-        return TaskView(self.id, self.history, self.tolerance, pressure, self.question, self.context)
+        return TaskView(self.id, self.history, self.tolerance, pressure, self.question, self.context, self.features)
 
     def is_correct(self, value: float) -> bool:
         return self.target is not None and abs(value - self.target) <= self.tolerance
 
 
 @dataclass
-class Bid:
+class Decline:
+    """A member that was not consulted (or had nothing to offer), and why."""
+
     node: str
-    p_success: float  # node's (Thompson-sampled) belief it will be right
-    cost: float  # expected extra compute to produce the answer
-    spent: float  # compute already burnt forming the bid
-    evidence: tuple = ()
-    p_mean: float = 0.5  # the calibrated estimate behind the sample
+    reason: str
+    spent: float = 0.0
 
 
 @dataclass
@@ -96,7 +99,6 @@ class Record:
     """Full transcript of one deliberation, broadcast to every node at settlement."""
 
     view: TaskView
-    bids: list = field(default_factory=list)
     declined: list = field(default_factory=list)
     proposals: list = field(default_factory=list)
     reviews: list = field(default_factory=list)
@@ -104,6 +106,10 @@ class Record:
     final_belief: float = 0.0
     cost: float = 0.0
     label: Optional[float] = None  # ground truth, only for labeled tasks
+    # "passive" = a label that arrived on its own; "asked" = one the council
+    # chose to ask for. Asked labels teach knowledge, never calibration, since
+    # they're a biased sample of hard cases.
+    label_source: Optional[str] = None
     certified: Optional[float] = None  # pseudo-label the council vouches for
     notes: dict = field(default_factory=dict)  # explanations nodes share at settlement
 

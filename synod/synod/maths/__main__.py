@@ -18,7 +18,7 @@ import time
 from ..protocol import Task
 from ..transcript import render
 from .experiment import SPLITS, run_maths
-from .mathlang import context, read
+from .mathlang import context, features, read
 
 MODEL = os.path.join("results", "maths_council.pkl")
 
@@ -48,8 +48,7 @@ def load():
     else:
         with open(MODEL, "rb") as fh:
             council = pickle.load(fh)
-    for node in council.nodes:
-        node.explore = False  # answering, not experimenting: bid what you believe
+    council.config.learn = False  # answering, not training: no exploration, router and judge fixed
     return council
 
 
@@ -58,7 +57,8 @@ _ids = [10 ** 6]
 
 def ask(council, question: str):
     _ids[0] += 1
-    task = Task(_ids[0], (), 1e-6, None, "", False, question=question, context=context(read(question)))
+    r = read(question)
+    task = Task(_ids[0], (), 1e-6, None, "", False, question=question, context=context(r), features=features(r))
     rec = council.handle(task)
     return rec, render(task, rec)
 

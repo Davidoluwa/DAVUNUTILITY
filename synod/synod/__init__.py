@@ -6,9 +6,9 @@ objective (reliable answers at low compute), and acts on those beliefs.
 """
 from .council import Council, CouncilConfig, FixedPipeline
 from .objective import Objective
-from .protocol import NEURAL, SYMBOLIC, Bid, Proposal, Record, Task, TaskView, Verdict
+from .protocol import NEURAL, SYMBOLIC, Decline, Proposal, Record, Task, TaskView, Verdict
 
 __all__ = [
     "Council", "CouncilConfig", "FixedPipeline", "Objective",
-    "NEURAL", "SYMBOLIC", "Bid", "Proposal", "Record", "Task", "TaskView", "Verdict",
+    "NEURAL", "SYMBOLIC", "Decline", "Proposal", "Record", "Task", "TaskView", "Verdict",
 ]

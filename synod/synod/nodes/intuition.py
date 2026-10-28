@@ -14,7 +14,7 @@ import numpy as np
 from ..beliefs import conf_bucket, erf_conf
 from ..node import Node
 from ..perception import normalize_window
-from ..protocol import NEURAL, Proposal, Verdict
+from ..protocol import NEURAL, Proposal
 
 
 class Ensemble:
@@ -71,14 +71,12 @@ class IntuitionNode(Node):
     kind = NEURAL
     width = 8
     min_focus = 0.15
-    learn_from_certified_at = 0.8  # noisy-world learner: a good consensus beats no data
 
     def __init__(self, name: str = "intuition", seed: int = 0, members: int = 5, hidden: int = 32,
                  unit_cost: float = 0.3, capacity: int = 3000, steps_per_example: int = 6):
         super().__init__(name, seed)
         self.net = Ensemble(members, self.width, hidden, self.rng)
         self.unit = unit_cost
-        self.glance_members = 2
         self.steps = steps_per_example
         self.X = np.zeros((capacity, self.width))
         self.y = np.zeros(capacity)
@@ -115,14 +113,6 @@ class IntuitionNode(Node):
         return value, sd, erf_conf(view.tolerance, sd), sig
 
     # -- capabilities ----------------------------------------------------
-    def estimate_glance_cost(self) -> float:
-        return self.glance_members * self.unit
-
-    def glance(self, view):
-        _, _, raw, _ = self._estimate(view, self.glance_members)
-        self.scratch(view)["paid"] = self.glance_members
-        return ("n2", conf_bucket(raw)), self.glance_members * self.unit, (self.net.M - self.glance_members) * self.unit
-
     def solve(self, view) -> Proposal:
         sc = self.scratch(view)
         paid = sc.get("paid", 0)
@@ -132,22 +122,6 @@ class IntuitionNode(Node):
         conf = min(self.competence.mean(("p",) + evidence + sig), 0.99)
         return Proposal(self.name, self.kind, value, conf, (self.net.M - paid) * self.unit,
                         f"ensemble says {value:.2f} ± {sd:.2f}", evidence)
-
-    def review_cost(self, view) -> float:
-        return (self.net.M - self.scratch(view).get("paid", 0)) * self.unit
-
-    def critique(self, view, proposal) -> Verdict:
-        """An independent second opinion: work it out myself, then compare."""
-        cost = self.review_cost(view)
-        if self.size < 40:
-            return Verdict(self.name, self.kind, None, 0.0, "too inexperienced to judge")
-        mine = self.solve(view)
-        gap = abs(proposal.value - mine.value)
-        if gap <= view.tolerance:
-            return Verdict(self.name, self.kind, True, cost, f"independently got {mine.value:.2f}")
-        mine.cost = 0.0
-        return Verdict(self.name, self.kind, False, cost,
-                       f"independently got {mine.value:.2f}, {gap / view.tolerance:.1f}x tolerance away", counter=mine)
 
     # -- learning --------------------------------------------------------
     def focus(self, sig) -> float:

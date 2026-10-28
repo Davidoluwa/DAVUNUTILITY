@@ -2,10 +2,10 @@
 
 Hand-written questions on curriculum topics: new numbers throughout, many in phrasings never seen in training, some with numbers outside the training ranges. The council was trained on the 4000-question curriculum only (no teacher), then frozen for the exam.
 
-## Score: 34/40 right, 4 wrong, 2 abstained
+## Score: 37/40 right, 3 wrong, 0 abstained
 
 - Familiar wording (new numbers): 22/22 right, 0 wrong
-- New wording: 12/18 right, 4 wrong
+- New wording: 15/18 right, 3 wrong
 
 Same exam, other set-ups (each trained the same way):
 
@@ -13,15 +13,15 @@ Same exam, other set-ups (each trained the same way):
 |---|---|---|---|
 | parser alone (symbolic) | 31 | 2 | 7 |
 | reader alone (neural) | 34 | 4 | 2 |
-| hand-written gate | 34 | 5 | 1 |
+| hand-written gate | 34 | 3 | 3 |
 
 ## Every question
 
 | # | topic | wording | question | key | Synod said | |
 |---|---|---|---|---|---|---|
 | 1 | arithmetic | familiar | What is 348 plus 279? | 627 | 627 | ✅ |
-| 2 | arithmetic | new | Find the difference between 900 and 456. | 444 | 1356 | ❌ |
-| 3 | arithmetic | new | What is 64 multiplied by 25? | 1600 | — | 🤷 abstained |
+| 2 | arithmetic | new | Find the difference between 900 and 456. | 444 | -444 | ❌ |
+| 3 | arithmetic | new | What is 64 multiplied by 25? | 1600 | 1600 | ✅ |
 | 4 | arithmetic | new | How much is 144 divided by 12? | 12 | 12 | ✅ |
 | 5 | arithmetic | familiar | What is 12 * (7 + 8) - 30? | 150 | 150 | ✅ |
 | 6 | remainders | familiar | What is the remainder when 523 is divided by 9? | 1 | 1 | ✅ |
@@ -50,107 +50,94 @@ Same exam, other set-ups (each trained the same way):
 | 29 | comparisons | familiar | Which is bigger: -12 or -15? | -12 | -12 | ✅ |
 | 30 | comparisons | new | Is 45 more than 54? | 0 | 0 | ✅ |
 | 31 | units | familiar | How many minutes are there in 2.5 hours? | 150 | 150 | ✅ |
-| 32 | units | new | How many centimeters make 7 meters? | 700 | — | 🤷 abstained |
+| 32 | units | new | How many centimeters make 7 meters? | 700 | 700 | ✅ |
 | 33 | units | familiar | How many weeks are there in 63 days? | 9 | 9 | ✅ |
 | 34 | word problems | new | Leila has 23 stickers. She gets 15 more. How many stickers does Leila have now? | 38 | 38 | ✅ |
-| 35 | word problems | new | A baker puts 48 rolls into 6 equal trays. How many rolls are in each tray? | 8 | 8 | ✅ |
+| 35 | word problems | new | A baker puts 48 rolls into 6 equal trays. How many rolls are in each tray? | 8 | 0 | ❌ |
 | 36 | word problems | new | There are 7 shelves with 9 books on each shelf. How many books are there altogether? | 63 | 63 | ✅ |
 | 37 | two-step | familiar | Suppose 5*x - 3 = 22. What is x plus 10? | 15 | 15 | ✅ |
-| 38 | two-step | new | Suppose 2*k + 1 = 15. What is k times 3? | 21 | 10 | ❌ |
-| 39 | two-step | new | Let f(x) = 2*x + 5. What is f(3) plus 4? | 15 | 44 | ❌ |
-| 40 | two-step | new | What is the least common multiple of 4 and 6, minus 5? | 7 | 12 | ❌ |
+| 38 | two-step | new | Suppose 2*k + 1 = 15. What is k times 3? | 21 | 21 | ✅ |
+| 39 | two-step | new | Let f(x) = 2*x + 5. What is f(3) plus 4? | 15 | 15 | ✅ |
+| 40 | two-step | new | What is the least common multiple of 4 and 6, minus 5? | 7 | 10 | ❌ |
 
 ## Deliberations worth reading
 
 ```text
 Q #900001: Find the difference between 900 and 456.
-  parser    bids p=0.82 (calibrated 0.82), needs 0.0 more compute
-  reader    bids p=0.93 (calibrated 0.93), needs 0.0 more compute
-  -> reader leads: 1356  conf 0.93  because (n1 + n2)  [reads like it, p=0.92, ensemble agrees, never seen this combination]
-     reader asks checker for review -> endorses: passes whole-number   (belief 0.89 -> 0.93)
-     reader asks estimator for review -> endorses: right ballpark (I'd guess about 103)   (belief 0.93 -> 0.94)
-  => answers 1356 from reader (belief 0.94)  [truth 444: WRONG]  compute 1.5
+  estimator not consulted (router: its opinion here is worth +0.000, less than its compute (0.012))
+  reader    consulted (router 99%): 1356  self-confidence 0.97  gate 0.48  because (n1 + n2)  [reads like it, p=0.98, ensemble agrees, never seen this combination]
+  parser    consulted (router 99%): -444  self-confidence 0.85  gate 0.52  because (n2 - n1)  [like 'find the difference when # is subtracted from #' (0.37); cues: 'difference'->sub:rev]
+     checker on -444: whole-number pass:trusted, yes-or-no fail:weak
+     checker on 1356: whole-number pass:trusted, yes-or-no fail:weak
+  judge: -444 ← parser: 0.52  1356 ← reader: 0.48   none of these: 0.01   (deliver at ≥ 0.50)
+     why it trusted parser: +0.6 v|parser|checker|endorse, +0.6 v|parser|checker|whole-number:pass:trusted, +0.5 ex|parser|analogy/far|ctx:medium, +0.3 ag|parser|0
+  => answers -444 from parser (probability 0.52)  [truth 444: WRONG]  compute 1.3
 ```
 
 ```text
-Q #900002: What is 64 multiplied by 25?
-  parser    declines: looked, unlikely to help (p~0.34, sampled 0.34)
-  reader    bids p=0.68 (calibrated 0.68), needs 0.0 more compute
-  => council abstains (no answer it believes enough)   [truth 1600]
-```
-
-```text
-Q #900031: How many centimeters make 7 meters?
-  parser    declines: looked, unlikely to help (p~0.05, sampled 0.05)
-  reader    declines: looked, unlikely to help (p~0.26, sampled 0.26)
-  => council abstains (no answer it believes enough)   [truth 700]
-```
-
-```text
-Q #900037: Suppose 2*k + 1 = 15. What is k times 3?
-  parser    declines: looked, unlikely to help (p~0.48, sampled 0.48)
-  reader    bids p=0.86 (calibrated 0.86), needs 0.0 more compute
-  -> reader leads: 10  conf 0.86  because (solve(equation) + n1)  [reads like it, p=0.93, ensemble agrees, never seen this combination]
-     reader asks estimator for review -> endorses: right ballpark (I'd guess about 26.7)   (belief 0.63 -> 0.68)
-     reader asks checker for review -> endorses: passes whole-number   (belief 0.68 -> 0.72)
-  => answers 10 from reader (belief 0.72)  [truth 21: WRONG]  compute 1.5
-```
-
-```text
-Q #900038: Let f(x) = 2*x + 5. What is f(3) plus 4?
-  parser    declines: looked, unlikely to help (p~0.48, sampled 0.48)
-  reader    bids p=0.86 (calibrated 0.86), needs 0.0 more compute
-  -> reader leads: 44  conf 0.86  because (f(call) * n1)  [reads like it, p=0.87, ensemble agrees, never seen this combination]
-     reader asks estimator for review -> endorses: right ballpark (I'd guess about 0.784)   (belief 0.63 -> 0.68)
-     reader asks checker for review -> endorses: passes whole-number   (belief 0.68 -> 0.72)
-  => answers 44 from reader (belief 0.72)  [truth 15: WRONG]  compute 1.5
+Q #900034: A baker puts 48 rolls into 6 equal trays. How many rolls are in each tray?
+  reader    not consulted (router: 100% chance of being right here; a second opinion isn't worth its compute)
+  estimator not consulted (router: its opinion here is worth +0.000, less than its compute (0.006))
+  checker   not consulted (router: its opinion here is worth -0.034, less than its compute (0.002))
+  parser    consulted (router 100%): 0  self-confidence 0.41  gate 0.97  because (is_prime(n1) / n2)  [composed from word meanings; cues: 'puts'->div, 'a'->is_prime]
+  judge: 0 ← parser: 0.97   none of these: 0.03   (deliver at ≥ 0.50)
+     why it trusted parser: −0.5 ex|parser|lexical/none|w:#, −0.5 ex|parser|lexical/none|w:in, +0.4 x|parser|ctx:multi, +0.3 ag|parser|0
+  => answers 0 from parser (probability 0.97)  [truth 8: WRONG]  compute 3.6
 ```
 
 ```text
 Q #900039: What is the least common multiple of 4 and 6, minus 5?
-  parser    declines: looked, unlikely to help (p~0.25, sampled 0.25)
-  reader    bids p=0.86 (calibrated 0.86), needs 0.0 more compute
-  -> reader leads: 12  conf 0.86  because lcm(n1, n2)  [reads like it, p=0.95, ensemble agrees, never seen this combination]
-     reader asks estimator for review -> endorses: right ballpark (I'd guess about 0.0132)   (belief 0.63 -> 0.69)
-     reader asks checker for review -> endorses: passes whole-number   (belief 0.69 -> 0.72)
-  => answers 12 from reader (belief 0.72)  [truth 7: WRONG]  compute 4.5
+  reader    not consulted (router: 100% chance of being right here; a second opinion isn't worth its compute)
+  estimator not consulted (router: its opinion here is worth +0.000, less than its compute (0.006))
+  checker   not consulted (router: its opinion here is worth -0.042, less than its compute (0.002))
+  parser    consulted (router 100%): 10  self-confidence 0.13  gate 0.95  because lcm((n1 - n2), n3)  [composed from word meanings; cues: 'multiple'->lcm, 'minus'->sub]
+  judge: 10 ← parser: 0.95   none of these: 0.05   (deliver at ≥ 0.50)
+     why it trusted parser: −0.5 ex|parser|lexical/none|w:#, +0.4 x|parser|w:what, −0.3 x|parser|w:common, +0.3 ag|parser|0
+  => answers 10 from parser (probability 0.95)  [truth 7: WRONG]  compute 3.6
+```
+
+```text
+Q #900002: What is 64 multiplied by 25?
+  reader    not consulted (router: 100% chance of being right here; a second opinion isn't worth its compute)
+  estimator not consulted (router: its opinion here is worth +0.000, less than its compute (0.006))
+  checker   not consulted (router: its opinion here is worth -0.036, less than its compute (0.002))
+  parser    consulted (router 100%): 1600  self-confidence 0.29  gate 0.97  because (n1 * n2)  [like 'calculate # multiplied by #' (0.54); cues: 'multiplied'->mul]
+  judge: 1600 ← parser: 0.97   none of these: 0.03   (deliver at ≥ 0.50)
+     why it trusted parser: +0.4 x|parser|w:what, +0.4 ex|parser|analogy/far|w:what, −0.4 ex|parser|analogy/far|ctx:small, +0.3 ag|parser|0
+  => answers 1600 from parser (probability 0.97)  [truth 1600: correct]  compute 0.6
 ```
 
 ```text
 Q #900003: How much is 144 divided by 12?
-  parser    declines: looked, unlikely to help (p~0.43, sampled 0.43)
-  reader    bids p=0.84 (calibrated 0.84), needs 0.0 more compute
-  -> reader leads: 12  conf 0.84  because (n1 / n2)  [reads like it, p=0.99, ensemble agrees, never seen this combination]
-     reader asks checker for review -> endorses: passes whole-number   (belief 0.62 -> 0.70)
-     reader asks estimator for review -> abstains: never seen questions like this; no feel for the size   (belief 0.70 -> 0.70)
-  => answers 12 from reader (belief 0.70)  [truth 12: correct]  compute 4.5
+  reader    not consulted (router: 100% chance of being right here; a second opinion isn't worth its compute)
+  estimator not consulted (router: its opinion here is worth +0.000, less than its compute (0.006))
+  checker   not consulted (router: its opinion here is worth -0.001, less than its compute (0.002))
+  parser    consulted (router 100%): 12  self-confidence 0.41  gate 0.98  because (n1 / n2)  [like 'what is # divided by #' (0.54); cues: 'divided'->div]
+  judge: 12 ← parser: 0.98   none of these: 0.02   (deliver at ≥ 0.50)
+     why it trusted parser: +0.5 ex|parser|analogy/far|ctx:medium, +0.3 ag|parser|0, +0.3 b|parser, +0.3 nc|parser|1
+  => answers 12 from parser (probability 0.98)  [truth 12: correct]  compute 3.6
 ```
 
 ```text
 Q #900006: When 250 is divided by 7, what is the remainder?
-  parser    bids p=1.00 (calibrated 1.00), needs 0.0 more compute
-  reader    bids p=0.99 (calibrated 0.99), needs 0.0 more compute
-  -> parser leads: 5  conf 0.99  because mod(n1, n2)  [like 'what is the remainder when # is divided by #' (1.00); cues: 'remainder'->mod]
-     parser asks checker for review -> endorses: passes whole-number   (belief 0.99 -> 0.99)
-  => answers 5 from parser (belief 0.99)  [truth 5: correct]  compute 1.2
+  reader    not consulted (router: 100% chance of being right here; a second opinion isn't worth its compute)
+  estimator not consulted (router: its opinion here is worth +0.000, less than its compute (0.006))
+  checker   not consulted (router: its opinion here is worth -0.023, less than its compute (0.002))
+  parser    consulted (router 100%): 5  self-confidence 0.99  gate 0.99  because mod(n1, n2)  [like 'what is the remainder when # is divided by #' (1.00); cues: 'remainder'->mod]
+  judge: 5 ← parser: 0.99   none of these: 0.01   (deliver at ≥ 0.50)
+     why it trusted parser: +0.8 cb|parser|9, −0.7 ex|parser|analogy/near|ctx:single, +0.6 ex|parser|analogy/near|ctx:N2, +0.5 cl|parser
+  => answers 5 from parser (probability 0.99)  [truth 5: correct]  compute 0.6
 ```
 
 ```text
 Q #900008: Find the highest common factor of 91 and 65.
-  parser    bids p=1.00 (calibrated 1.00), needs 0.0 more compute
-  reader    bids p=0.94 (calibrated 0.94), needs 0.0 more compute
-  -> parser leads: 13  conf 0.99  because gcd(n1, n2)  [like 'calculate the highest common factor of # and #' (0.72); cues: 'factor'->gcd]
-     parser asks reader for review -> endorses: reads it the same way (gcd(n1, n2))   (belief 0.99 -> 0.99)
-  => answers 13 from parser (belief 0.99)  [truth 13: correct]  compute 1.1
+  estimator not consulted (router: its opinion here is worth +0.000, less than its compute (0.006))
+  checker   not consulted (router: its opinion here is worth -0.050, less than its compute (0.002))
+  parser    consulted (router 99%): 13  self-confidence 0.99  gate 0.19  because gcd(n1, n2)  [like 'calculate the highest common factor of # and #' (0.72); cues: 'factor'->gcd]
+  reader    consulted (router 99%): 13  self-confidence 0.99  gate 0.78  because gcd(n1, n2)  [reads like it, p=0.95, ensemble agrees]
+  judge: 13 ← parser+reader: 0.97   none of these: 0.03   (deliver at ≥ 0.50)
+     why it trusted reader: +0.5 cl|reader, +0.5 cb|reader|9, +0.3 nc|reader|1, +0.3 ex|reader|r/familiar|ctx:small
+  => answers 13 from reader (probability 0.97)  [truth 13: correct]  compute 1.1
 ```
 
-```text
-Q #900009: What is the smallest number that is a multiple of both 9 and 15?
-  parser    declines: looked, unlikely to help (p~0.34, sampled 0.34)
-  reader    bids p=0.98 (calibrated 0.98), needs 0.0 more compute
-  -> reader leads: 45  conf 0.98  because lcm(n1, n2)  [reads like it, p=0.88, ensemble agrees, never seen this combination]
-     reader asks checker for review -> endorses: passes whole-number   (belief 0.91 -> 0.93)
-  => answers 45 from reader (belief 0.93)  [truth 45: correct]  compute 4.2
-```
-
-_Exam run took 88s._
+_Exam run took 77s._

@@ -2,7 +2,7 @@ import unittest
 
 import numpy as np
 
-from synod.beliefs import ClaimCalibrator, Competence, DriftMonitor, claim_bin
+from synod.beliefs import Competence, DriftMonitor
 from synod.objective import Objective
 
 
@@ -32,29 +32,6 @@ class CompetenceTest(unittest.TestCase):
         self.assertLess(c.count(("k",)), 6)
         self.assertGreater(c.mean(("k",)), 0.5)
         self.assertLess(c.mean(("k",)), before)
-
-
-class ClaimCalibratorTest(unittest.TestCase):
-    def test_face_value_without_evidence(self):
-        self.assertAlmostEqual(ClaimCalibrator().adjust("peer", 0.9), 0.9)
-
-    def test_confident_failures_are_discounted_fast(self):
-        cal = ClaimCalibrator()
-        for _ in range(5):
-            cal.update("liar", 0.97, correct=False)
-        self.assertLess(cal.adjust("liar", 0.97), 0.5)
-        self.assertLess(cal.trust("liar"), 0.4)
-        self.assertAlmostEqual(cal.adjust("someone-else", 0.97), 0.97)
-
-    def test_calibrated_peer_keeps_trust(self):
-        cal, rng = ClaimCalibrator(), np.random.default_rng(0)
-        for _ in range(300):
-            cal.update("honest", 0.7, correct=bool(rng.random() < 0.7))
-        self.assertGreater(cal.trust("honest"), 0.8)
-
-    def test_bins(self):
-        self.assertEqual(claim_bin(0.0), 0)
-        self.assertEqual(claim_bin(0.999), claim_bin(1.0))
 
 
 class DriftMonitorTest(unittest.TestCase):

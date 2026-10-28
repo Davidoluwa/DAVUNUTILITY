@@ -10,7 +10,7 @@ import numpy as np
 
 from ..node import Node
 from ..perception import normalize_window
-from ..protocol import NEURAL, Proposal, Verdict
+from ..protocol import NEURAL, Proposal
 
 
 class RecallNode(Node):
@@ -29,9 +29,6 @@ class RecallNode(Node):
         self._ptr = 0
         self.k = k
         self.lookup_cost = lookup_cost
-
-    def estimate_glance_cost(self) -> float:
-        return self.lookup_cost
 
     def _lookup(self, view):
         sc = self.scratch(view)
@@ -59,10 +56,6 @@ class RecallNode(Node):
         sc.update(pred=anchor + t * scale, sd=spread, ev=("m", dist, agree), dmin=dmin)
         return sc
 
-    def glance(self, view):
-        sc = self._lookup(view)
-        return sc["ev"], self.lookup_cost, 0.0
-
     def solve(self, view) -> Proposal:
         sc = self.scratch(view)
         cost = 0.0 if "pred" in sc else self.lookup_cost
@@ -71,20 +64,6 @@ class RecallNode(Node):
         conf = min(self.competence.mean(("p",) + sc["ev"] + sig), 0.99)
         return Proposal(self.name, self.kind, sc["pred"], conf, cost,
                         f"recalls {sc['ev'][1]} match -> {sc['pred']:.2f}", sc["ev"])
-
-    def review_cost(self, view) -> float:
-        return 0.0 if "pred" in self.scratch(view) else self.lookup_cost
-
-    def critique(self, view, proposal) -> Verdict:
-        cost = self.review_cost(view)
-        sc = self._lookup(view)
-        if sc["ev"][1] not in ("exact", "near"):
-            return Verdict(self.name, self.kind, None, cost, "nothing like this in memory")
-        if abs(proposal.value - sc["pred"]) <= view.tolerance + sc["sd"]:
-            return Verdict(self.name, self.kind, True, cost, f"matches remembered outcome {sc['pred']:.2f}")
-        counter = self.solve(view)
-        counter.cost = 0.0
-        return Verdict(self.name, self.kind, False, cost, f"memory says {sc['pred']:.2f}", counter=counter)
 
     def learn(self, view, value, source, record) -> None:
         z, anchor, scale = normalize_window(view.history, self.width)

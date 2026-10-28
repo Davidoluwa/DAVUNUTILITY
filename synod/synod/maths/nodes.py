@@ -98,7 +98,7 @@ class ParserNode(_MathNode):
 
     def cues(self, r):
         """table[prim] = [(word, strength)] and strength[word] = its strongest pull."""
-        words = set(r.words)
+        words = sorted(set(r.words))
         table, strength = {}, {}
         for p in self.prim_n:
             for w in words:
@@ -162,7 +162,7 @@ class ParserNode(_MathNode):
         return out
 
     def similar(self, r, k=3):
-        cands = self.by_slots.get(r.slots, ())
+        cands = sorted(self.by_slots.get(r.slots, ()))  # sorted: ties must not depend on set order
         S = len(self.memory)
         mine = set(r.skeleton)
 
@@ -226,9 +226,6 @@ class ParserNode(_MathNode):
         return mode, prog, value, why, (closeness, "clear" if margin > 1.0 else "close"), spent
 
     # -- capabilities ----------------------------------------------------
-    def estimate_glance_cost(self) -> float:
-        return 0.4
-
     def glance(self, view):
         r = self.reading(view)
         sc = self.scratch(view)
@@ -264,43 +261,6 @@ class ParserNode(_MathNode):
         conf = min(self.competence.mean(("p",) + tuple(ev) + view.context), 0.99)
         return Proposal(self.name, self.kind, float(value), conf, cost, f"{describe(prog)}  [{why}]", tuple(ev), prog)
 
-    def review_cost(self, view) -> float:
-        return 0.2
-
-    def critique(self, view, proposal) -> Verdict:
-        r = self.reading(view)
-        items = self.ranked(r.skeleton, r)
-        if (not items or items[0][0] < 2) and proposal.program is not None and self.lex_total > 0:
-            # Unfamiliar wording: object if the reading ignores words that clearly mean something.
-            table, strength = self.cues(r)
-            _, align = self._lex_score(proposal.program, (table, strength))
-            used = {w for _, w in align}
-            loud = sorted(((v, w) for w, v in strength.items() if w not in used and v >= 1.5), reverse=True)
-            if not loud:
-                return Verdict(self.name, self.kind, None, 0.4, "unfamiliar wording; nothing obviously ignored")
-            mine = self.analogize(r)
-            v, w = loud[0]
-            counter = None
-            if mine is not None and not matches(mine[2], proposal.value):
-                ev = (mine[0],) + mine[4]
-                conf = min(self.competence.mean(("p",) + ev + view.context), 0.99)
-                counter = Proposal(self.name, self.kind, float(mine[2]), conf, 0.0,
-                                   f"{describe(mine[1])}  [{mine[3]}]", ev, mine[1])
-            return Verdict(self.name, self.kind, False, 0.4 + (mine[5] if mine else 0.0),
-                           f"that reading ignores '{w}'", counter=counter,
-                           evidence=("objection", "loud" if v >= 2.5 else "clear"))
-        if not items or items[0][0] < 2:
-            return Verdict(self.name, self.kind, None, 0.2, "haven't seen this wording often enough to judge")
-        top = items[0]
-        ev = ("support", "5+" if top[0] >= 5 else "2-4")
-        if matches(top[4], proposal.value):
-            return Verdict(self.name, self.kind, True, 0.2, f"agrees: {describe(top[3])}", evidence=ev)
-        conf = min(self.competence.mean(("p", "known", "5+" if top[0] >= 5 else "2-4", "unique") + view.context), 0.99)
-        counter = Proposal(self.name, self.kind, float(top[4]), conf, 0.0, f"{describe(top[3])}  [wording seen before]",
-                           ("known", "5+" if top[0] >= 5 else "2-4", "unique"), top[3])
-        return Verdict(self.name, self.kind, False, 0.2, f"this wording means {describe(top[3])} = {_num(top[4])}",
-                       counter=counter, evidence=ev)
-
     # -- learning --------------------------------------------------------
     def explain(self, record):
         """For a labeled task, share which programs explain the answer."""
@@ -330,7 +290,7 @@ class ParserNode(_MathNode):
         return {"best": best, "searched": searched}
 
     def learn(self, view, value, source, record) -> None:
-        if source == "label":
+        if source in ("label", "asked"):
             r, consistent, searched = self._pending.pop(view.id, (None, None, None))
             if r is None:
                 return
@@ -352,27 +312,20 @@ class ParserNode(_MathNode):
             note = record.notes.get(self.name)
             if note:
                 self._learn_words(r, note["best"], 1.0)
-        elif source == "certified" and record.final is not None and record.final.program is not None \
-                and record.final.node != self.name:
-            # A peer answered a wording I couldn't place, confidently enough to
-            # vouch for: remember it (weakly) as a new wording for that program.
+        elif source == "certified" and record.final is not None and record.final.program is not None:
+            # The council was confident enough to teach from this answer:
+            # remember it (weakly) as a meaning for a wording I didn't know.
             r = read(view.question)
             prog = record.final.program
             v = run(prog, r)
             if v is None or not matches(v, value) or r.skeleton in self.memory:
-                return
-            # No hearsay: only remember it if my own reasoning gets there too.
-            mine = self.analogize(r)
-            self.maintenance_cost += 1.0 if mine is None else mine[5]
-            if mine is None or not matches(mine[2], value):
-                self.stats["peer_answers_not_corroborated"] += 1
                 return
             entry = self.memory.setdefault(r.skeleton, {})
             if not entry:
                 self.by_slots.setdefault(r.slots, set()).add(r.skeleton)
                 for t in set(r.skeleton):
                     self.skel_df[t] += 1
-                self.stats["wordings_learned_from_peers"] += 1
+                self.stats["wordings_learned_from_council"] += 1
             entry.setdefault(prog, [0.0, 0.0])[0] += 0.5
             self._learn_words(r, [prog], 0.5)
 
@@ -442,7 +395,6 @@ class _SparseMLP:
 
 class ReaderNode(_MathNode):
     kind = NEURAL
-    learn_from_certified_at = 0.9
 
     def __init__(self, name: str = "reader", seed: int = 0, hidden: int = 64, steps: int = 5, members: int = 3):
         super().__init__(name, seed)
@@ -516,13 +468,6 @@ class ReaderNode(_MathNode):
         # ground, not borrowed from my (excellent) record on familiar questions.
         return ("r", "novel" if novel else "familiar", "agree" if agree else "split", conf_bucket(prob))
 
-    def estimate_glance_cost(self) -> float:
-        return 0.5
-
-    def glance(self, view):
-        pred = self.predict(view)
-        return (self._evidence(pred) if pred else ("r", "none")), 0.5, 0.0
-
     def solve(self, view) -> Proposal:
         sc = self.scratch(view)
         cost = 0.0 if "pred" in sc else 0.5
@@ -536,29 +481,10 @@ class ReaderNode(_MathNode):
         return Proposal(self.name, self.kind, float(v), conf, cost,
                         f"{describe(prog)}  [reads like it, p={prob:.2f}, {note}]", ev, prog)
 
-    def review_cost(self, view) -> float:
-        return 0.0 if "pred" in self.scratch(view) else 0.5
-
-    def critique(self, view, proposal) -> Verdict:
-        cost = self.review_cost(view)
-        pred = self.predict(view)
-        if pred is None or pred[2] < 0.4:
-            return Verdict(self.name, self.kind, None, cost, "can't tell what this asks")
-        mine = self.solve(view)
-        ev = ("sure" if mine.confidence >= 0.8 else "unsure",) + mine.evidence[1:3]
-        prog, v = pred[0], pred[1]
-        if matches(v, proposal.value):
-            return Verdict(self.name, self.kind, True, cost, f"reads it the same way ({describe(prog)})", evidence=ev)
-        if mine.confidence < 0.6 or not pred[3]:
-            return Verdict(self.name, self.kind, None, cost, f"I'd read it as {describe(prog)}, but I'm not sure enough to object")
-        mine.cost = 0.0
-        return Verdict(self.name, self.kind, False, cost, f"reads it as {describe(prog)} = {_num(v)}",
-                       counter=mine, evidence=ev)
-
     def learn(self, view, value, source, record) -> None:
         r = read(view.question)
         targets = None
-        if source == "label":
+        if source in ("label", "asked"):
             note = record.notes.get("parser")
             if note and note["best"]:
                 targets = note["best"]
@@ -567,10 +493,6 @@ class ReaderNode(_MathNode):
                 if pred and matches(pred[1], value):
                     targets = [pred[0]]
         elif record.final is not None and record.final.program is not None:
-            mine_and_novel = record.final.node == self.name and record.final.evidence[1:2] == ("novel",)
-            if mine_and_novel:  # never teach myself from my own guesses on new ground
-                self.stats["skipped_own_novel_answers"] += 1
-                return
             targets = [record.final.program]
         if not targets:
             return
@@ -653,25 +575,21 @@ class EstimatorNode(_MathNode):
             sc["guess"] = float(out[0])
         return sc["guess"]
 
-    def review_cost(self, view) -> float:
-        return 0.3
-
     def critique(self, view, proposal) -> Verdict:
+        """Report how far the candidate's size is from my guess, in my own
+        standard deviations, and how familiar the question looks to me."""
         if len(self.buffer) < 150 or not math.isfinite(proposal.value):
             return Verdict(self.name, self.kind, None, 0.3, "no feel for this yet")
         feats = feature_strings(self.reading(view))
-        if sum(f not in self.familiar for f in feats) > 0.15 * len(feats):
-            return Verdict(self.name, self.kind, None, 0.3, "never seen questions like this; no feel for the size")
+        unfamiliar = sum(f not in self.familiar for f in feats) / max(len(feats), 1)
         y = self.guess(view)
         sd = max(math.sqrt(self.resid.get(view.context, 1.0)), 0.15)
-        gap = abs(squash(proposal.value) - y)
-        about = 10 ** abs(y) - 1
-        guess = f"{math.copysign(about, y):.3g}"
-        if gap <= 2.5 * sd + 0.1:
-            return Verdict(self.name, self.kind, True, 0.3, f"right ballpark (I'd guess about {guess})",
-                           evidence=("close" if gap <= sd else "loose",))
-        return Verdict(self.name, self.kind, False, 0.3, f"wrong ballpark: I'd expect about {guess}",
-                       evidence=("far" if gap <= 5 * sd else "way-off",))
+        z = abs(squash(proposal.value) - y) / sd
+        gap = "close" if z <= 1 else "loose" if z <= 2.5 else "far" if z <= 5 else "way-off"
+        familiarity = "familiar" if unfamiliar == 0 else "partly-new" if unfamiliar <= 0.15 else "new"
+        guess = f"{math.copysign(10 ** abs(y) - 1, y):.3g}"
+        return Verdict(self.name, self.kind, z <= 2.5, 0.3, f"I'd guess about {guess}; this is {gap} ({familiarity} question)",
+                       evidence=(f"size:{gap}", f"seen:{familiarity}"))
 
     def learn(self, view, value, source, record) -> None:
         if source != "label":
@@ -703,7 +621,7 @@ def _is_whole(v):
 class CheckerNode(_MathNode):
     kind = SYMBOLIC
     solves = False
-    veto_at = 0.97
+    trusted_at = 0.97
 
     CHECKS = ("satisfies-the-equation", "whole-number", "yes-or-no", "inside-the-list")
 
@@ -733,26 +651,24 @@ class CheckerNode(_MathNode):
         xs = [float(x) for x in r.lists[0]]
         return min(xs) <= v <= max(xs)
 
-    def review_cost(self, view) -> float:
-        return 0.1
-
     def critique(self, view, proposal) -> Verdict:
+        """Report every applicable check: pass or fail, and whether its track
+        record for this kind of question makes it one I'd stand behind."""
         r = self.reading(view)
-        trusted = []
+        signals, broken_trusted, any_trusted = [], [], False
         for c in self.CHECKS:
-            if self._applies(c, r):
-                rel = self.reliability.mean((c,) + view.context + (r.skeleton,))
-                if rel >= self.veto_at:
-                    trusted.append((c, rel))
-        if not trusted:
-            return Verdict(self.name, self.kind, None, 0.1, "no check I trust applies")
-        broken = [(c, rel) for c, rel in trusted if not self._holds(c, r, proposal.value)]
-        if broken:
-            c, rel = max(broken, key=lambda x: x[1])
-            return Verdict(self.name, self.kind, False, 0.1, f"fails '{c}' (true {rel:.0%} of the time for this wording)",
-                           evidence=(c,))
-        return Verdict(self.name, self.kind, True, 0.1, "passes " + ", ".join(c for c, _ in trusted),
-                       evidence=tuple(sorted(c for c, _ in trusted)))
+            if not self._applies(c, r):
+                continue
+            rel = self.reliability.mean((c,) + view.context + (r.skeleton,))
+            ok = self._holds(c, r, proposal.value)
+            trust = "trusted" if rel >= self.trusted_at else "weak"
+            any_trusted |= trust == "trusted"
+            signals.append(f"{c}:{'pass' if ok else 'fail'}:{trust}")
+            if trust == "trusted" and not ok:
+                broken_trusted.append(c)
+        endorses = None if not any_trusted else not broken_trusted
+        why = ", ".join(s.replace(":", " ", 1) for s in signals) or "no check applies"
+        return Verdict(self.name, self.kind, endorses, 0.1, why, evidence=tuple(signals))
 
     def learn(self, view, value, source, record) -> None:
         if source != "label":
