@@ -227,7 +227,7 @@ One bench of 43 (more once it invents procedures, 10.10):
 
 | expert | kind | what it knows | what it learns |
 |---|---|---|---|
-| 28 operators (`add`, `sub`, …, `solve`, `apply`, `round`, `mean`) | symbolic | its own operation, exactly | **when** it's the next move (logistic over the question's words, the step number, the previous operation, which kinds of fact are still unused, and the words around the facts still unused) and **which facts** to apply it to (a softmax over type-correct bindings, scored by the words around each fact, never its position) |
+| 28 operators (`add`, `sub`, …, `solve`, `apply`, `round`, `mean`) | symbolic | its own operation, exactly | **when** it's the next move (a logistic over the question's words and the words around the facts still unused, and what those facts look like; **evidence only**: weights can't go below zero except a prior and "already applied", and nothing about how far the solution has got, 11.7) and **which facts** to apply it to (a softmax over type-correct bindings, scored by the words around each fact, never its position) |
 | 8 neural | neural | nothing | which operation comes next (or that it's finished), from hashed n-grams of the question through each network's own random view, the steps so far and the words around unused facts. The operator expert for that operation binds the arguments. Trained as a **mixture of experts**: each step is shared out in proportion to how well each network already predicts it (`h_i ∝ p_i(step)`), so the pool divides the work |
 | memory | symbolic | nothing | worked solutions of exact wordings |
 | analogy | symbolic | nothing | borrows solutions from the most similar wordings (same notation, IDF-weighted word overlap) |
@@ -266,7 +266,7 @@ It does what stacking promises (the judge learns that pattern-copying experts ar
 
 | idea | result |
 |---|---|
-| judge priors on step order (`op × step number`, `op × previous op`) | don't transfer to new combinations; removed from the judge (operators keep them). The same habits on `answer` ("stop after a subtraction") went too, once relevance could say when to stop: four-step problems went from 0% to 7% over 3 seeds, the rest unchanged |
+| judge priors on step order (`op × step number`, `op × previous op`) | don't transfer to new combinations; removed from the judge (and, since 11.7, from the operators too). The same habits on `answer` ("stop after a subtraction") went too, once relevance could say when to stop: four-step problems went from 0% to 7% over 3 seeds, the rest unchanged |
 | preferring worked solutions that use every number | wrong as soon as a question has a number that doesn't matter; replaced by the most likely route that reaches the answer (10.9) |
 | operators reading absolute positions ("the first number") | removed; binding by the words around a fact transfers to new layouts |
 | neural experts predicting whole steps with positional arguments (`sub(N3,S1)`) | learned "subtract from the third number" and broke on longer problems; now they predict the operation and the operator binds |
@@ -357,6 +357,7 @@ Nothing in the experts, the judge, deliberation, the search for worked solutions
 | verifiable | does the problem carry its own check? | no | **yes: the examples** | no |
 | perception | what a fact looks like (`describe`) | nothing | nothing | raw / gathered / isolated / solved / asked |
 | extras | reviewers, fallback search, answer kinds, solution length | checker, estimator, `explain` | 1–2 step enumeration | breadth-first moves; answers are numbers; up to 10 steps |
+| unknowns | what a problem asks to be derived, and when a workspace has reached it (`unknowns`, `reached`) | none | none | **the variables the question asks about; reached once each is read off a solved equation** |
 
 Everything else is shared code. Arithmetic's behaviour was checked unchanged through the refactor: a fingerprint of every answer and probability over 1800 practice and 120 test questions stayed byte-identical.
 
@@ -364,7 +365,7 @@ Everything else is shared code. Arithmetic's behaviour was checked unchanged thr
 
 When a problem carries its own check (code: the examples), the room delivers only an answer that passes it, and learns from what passes, with no answers revealed, ever. When nothing it deliberates passes, it searches (its own experts and judge guiding a beam), and if that fails it searches again twice as wide, and again (6, 12, 24 routes), stopping as soon as something passes. Search compute counts towards the cost of the question. Programs are graded on hidden inputs of other lengths and ranges, so passing the examples isn't enough.
 
-When a problem doesn't carry a check (algebra), the room can still think harder when it would otherwise abstain: deliberate again with a wider beam and with each operator offering its three best ways to apply itself instead of one.
+When a problem doesn't carry a check (algebra), the room can still think harder when it would otherwise abstain: deliberate again with a wider beam and with each operator offering its three best ways to apply itself instead of one. And since every algebra move is sound, a derivation of what the question asks is a proof: the same escalating search then looks for one (11.7).
 
 ### 11.3 Code (`synod/code/`)
 
