@@ -72,9 +72,12 @@ class RoomConfig:
     search_width: int = 6
     search_alternatives: int = 3  # bindings per operator considered while searching
     speak_at: float = 0.01  # an operator with less than this share of the operators' readiness stays quiet
-    # verifiable problems: search wider while nothing passes the check, and as a last resort trust the judge's
-    # preferences less (a softmax temperature of 3): an open mind once the best judgement has failed
-    escalate: tuple = ((6, 3), (12, 3), (24, 4), (24, 4, 3.0))
+    # Problems with a check (or unknowns to derive): search wider while nothing passes, then trust the judge's
+    # preferences less (a softmax temperature of 3): an open mind once the best judgement has failed. Last, search
+    # without the experts that propose by habit (neural pool, memory, analogy): on problems unlike any seen, the
+    # familiar frames they copy are what fails, and the operators read the problem itself.
+    # (width, bindings per operator[, temperature[, habits heard]])
+    escalate: tuple = ((6, 3), (12, 3), (24, 4), (24, 4, 3.0), (24, 4, 1.0, False))
     think_harder: tuple = ()  # (beam, bindings per operator) to retry with, wider each time, while the room would abstain
     stop_habits: bool = False  # the judge reading the step number and previous operation on "answer" (habits that break on longer problems)
     judge_lr: float = 0.3
@@ -246,7 +249,10 @@ class Room:
         total = sum(ready.values())
         top = getattr(self, "_top", 1)
         quiet = 0.0 if search or top > 1 else self.config.speak_at * total
+        habits = getattr(self, "_habits", True)
         for e in bench.steppers:
+            if e.habit and not habits:
+                continue
             if isinstance(e, OperatorExpert):
                 props = [] if not allow_steps or ready[e.name] < quiet else \
                     e.propose(scene, ws, self.config.search_alternatives if search else top)
@@ -427,9 +433,10 @@ class Room:
         keep = (cfg.search_width, cfg.search_alternatives)
         path = None
         try:
-            for level, (width, alternatives, *temp) in enumerate(cfg.escalate):
+            for level, (width, alternatives, *more) in enumerate(cfg.escalate):
                 cfg.search_width, cfg.search_alternatives = width, alternatives
-                self._temperature = temp[0] if temp else 1.0  # each failure: doubt the judge's preferences more
+                self._temperature = more[0] if more else 1.0  # each failure: doubt the judge's preferences more
+                self._habits = more[1] if len(more) > 1 else True
                 path = self.search(scene, goal, bench, fallback=level == 0)
                 res.cost += self.search_cost + 0.02 * scene.cache.pop("fallback_runs", 0)
                 res.effort = width
@@ -437,7 +444,7 @@ class Room:
                     break
         finally:
             cfg.search_width, cfg.search_alternatives = keep
-            self._temperature = 1.0
+            self._temperature, self._habits = 1.0, True
         res.searched = True
         return path
 

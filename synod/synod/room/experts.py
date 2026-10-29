@@ -177,6 +177,7 @@ class Expert:
     role = "step"  # step | review
     cost = 0.02
     domains = None  # the domains whose problems it works on (None: all)
+    habit = False  # proposes by resemblance to past solutions as a whole, not from what it reads in this problem
 
     def __init__(self, name: str, seed: int = 0):
         self.name = name
@@ -243,15 +244,18 @@ class OperatorExpert(Expert):
     """Knows one exact operation. Learns when it's the right next step and
     which facts to apply it to.
 
-    *When* is read from what the problem says, what is still open on the
-    table and where the solution stands, and all of it can only be evidence
-    *for* its operation, never against it (see ``EvidenceLogLinear``). Signed
-    weights learned vetoes: in training "squares" always came first and never
-    in a question that said "even", so after "keep the even numbers" the
-    question's own "square" was outvoted by "even" and by "a step has already
-    been taken". Evidence-only, a familiar operation is still called for in a
-    combination, or at a point in a longer solution, that training never showed
-    it in. Only a prior, and having already been applied, can count against it."""
+    *When* is read from what the problem says and what is still open on the
+    table, never from how the solution got there (no step number, no previous
+    operation), and all of it can only be evidence *for* its operation, never
+    against it (see ``EvidenceLogLinear``). Signed weights learned vetoes: in
+    training "squares" always came first and never in a question that said
+    "even", so after "keep the even numbers" the question's own "square" was
+    outvoted by "even" and by "a step has already been taken". Evidence-only,
+    a familiar operation is still called for in a combination, or at a point
+    in a longer solution, that training never showed it in. Only a prior, and
+    having already been applied, can count against it. (Reading the
+    trajectory as evidence too helped arithmetic word problems a little but
+    revived two-equation habits on three-equation systems: 40% -> 17-28%.)"""
 
     kind = SYMBOLIC
     cost = 0.02
@@ -266,13 +270,12 @@ class OperatorExpert(Expert):
     @staticmethod
     def _fire_names(scene, ws) -> list:
         """What every operator reads to decide whether it's the next move: the
-        problem's words, where the solution stands and what is still open on
-        the table (the same for all of them, so it's worked out once per state)."""
+        problem's words and what is still open on the table (the same for all
+        of them, so it's worked out once per state)."""
         key = ("fire", ws.history)
         names = scene.cache.get(key)
         if names is None:
-            names = scene.cache[key] = list(dict.fromkeys(
-                list(scene.wfeats) + state_features(ws) + open_context(scene, ws) + ["bias"]))
+            names = scene.cache[key] = list(dict.fromkeys(list(scene.wfeats) + open_context(scene, ws) + ["bias"]))
         return names
 
     def _fire_feats(self, scene, ws):
@@ -502,6 +505,7 @@ class NeuralExpert(Expert):
     symbolic expert, and positional habits can't leak into longer problems."""
 
     kind = NEURAL
+    habit = True
     cost = 0.2
 
     def __init__(self, name: str, seed: int = 0, tokens=None):
@@ -616,6 +620,7 @@ class MemoryExpert(Expert):
     """Recalls worked solutions of the exact same wording."""
 
     kind = SYMBOLIC
+    habit = True
     cost = 0.02
 
     def __init__(self, name="memory", seed=0):
@@ -655,6 +660,7 @@ class AnalogyExpert(Expert):
     notation, most words in common, rare words weighted more)."""
 
     kind = SYMBOLIC
+    habit = True
     cost = 0.1
 
     def __init__(self, name="analogy", seed=0, k=3):

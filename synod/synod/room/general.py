@@ -99,13 +99,16 @@ def write(table, seeds, path=os.path.join("results", "GENERAL_REPORT.md")):
             L.append("Write a list program from a description and three examples. No answers are ever revealed: the "
                      "examples are the only check, and the room delivers only a program that passes them. Graded on "
                      "four hidden inputs of other lengths and ranges. When nothing passes, the room searches, then "
-                     "searches twice as wide, and again (6, 12, 24 routes), and as a last resort once more trusting its own "
-                     "judge less (doubt after failure).\n")
+                     "searches twice as wide, and again (6, 12, 24 routes), then once more trusting its own judge less "
+                     "(doubt after failure), and last without the experts that propose by habit (neural pool, memory, "
+                     "analogy).\n")
         else:
             L.append("Solve equations and systems of equations by general moves (expand, gather terms, divide both "
                      "sides, isolate, substitute, eliminate, read off a value); no solve move. Half the practice "
                      "questions reveal their answer, never the derivation. When unsure, the room deliberates again "
-                     "with a wider beam and more options per operator.\n")
+                     "with a wider beam and more options per operator. Answering for real, an answer that doesn't "
+                     "come with a derivation of the asked variables is a guess; unsure or guessing, the room searches "
+                     "for such a derivation (every move is sound, so it is a proof) and finishes from there.\n")
         L.append("| strategy | " + " | ".join(splits) + " |")
         L.append("|---|" + "---|" * len(splits))
         for v, res in rows.items():
