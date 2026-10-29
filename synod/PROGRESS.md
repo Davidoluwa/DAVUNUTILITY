@@ -115,6 +115,67 @@ The last change that mattered: when even the widest search fails the examples, t
 
 It holds together and kept two invented procedures. Sharing has a cost, though. At depth it's weaker than the specialists (four-step code 24% vs 43%), and on algebra's unseen combinations the orchestra **derives the right answer and abstains**. The shared judge trusts the necessary first move (expanding the brackets) too little, so the route's probability stays under the answer bar. No modality specialisation emerged among the neural experts.
 
+## 6. Depth: an algorithm problem, not a data problem (the morning after)
+
+### The control
+
+If depth were a data or scale problem, more of the same practice would help. **Doubling it made every domain worse** (seed 0):
+
+| | normal practice | twice the practice |
+|---|---|---|
+| code: four-step programs | 48% | **29%** |
+| algebra: three equations | 13% | **10%** (and new wordings 96% → 76%) |
+| arithmetic: four-step problems | 0% right, 84% wrong | 0% right, **100% wrong** |
+
+More practice at the same lengths makes the room surer of its habits, so it ends up more confidently wrong one step further out.
+
+**Not the step number.** The obvious suspect was experts reading "this is step 3". Removing every step-number and start-of-solution feature changed nothing: code 48% → 48%, algebra 13% → 9%, arithmetic 0% → 2%.
+
+### What it actually was: learned vetoes
+
+Traced along the correct solution, step by step:
+
+- **Code**, "Square the even numbers and keep the 2 largest": after keeping the evens, the `squares` operator scored 0.000, so nobody even proposed the step. Its own word ("square", +2.4) was outvoted by learned negatives:
+  - "even" −1.8 and "numbers" −1.9 (in training, squaring never came in a question about evens);
+  - "a derived list is open" −2.3 and "step 1" −1.4 (squaring always came first).
+
+  Put two familiar clauses together and each one's words veto the other's operation.
+- **Algebra**, 3×3 systems: the judge was 100% sure at every step of moves it had never seen work, and never found the derivation.
+
+### Three general fixes
+
+1. **Evidence for, never against** (all domains, `EvidenceLogLinear`). Operators fire on evidence only: the question's words and what's open on the table can support an operation but never veto it. Only a prior and "already applied" can count against it. Operators also stopped reading how far the solution has got: as evidence it helped arithmetic word problems a little, but revived two-equation habits on three-equation systems (40% → 17–28%).
+2. **A derivation by sound moves is a proof** (algebra; `Domain.unknowns` and `Domain.reached`, the rest is engine). Every algebra move keeps the equations true, so a derivation that reads off the asked variables proves them, however unfamiliar the route.
+   - Answering for real, an answer that doesn't come with a derivation of what's asked is a guess, and isn't delivered.
+   - Unsure (or guessing), the room searches for a derivation, wider each time, then deliberates from there as usual to finish (read it off, add two values, ask whether one is prime …).
+   - Not during practice. On one seed, deriving during practice too dropped three-equation systems from 73% to 13%: practising on its own roundabout derivations taught roundabout habits.
+3. **Last resort without the habits** (all searches). When every search has failed the check, search once more without the experts that propose by resemblance to past solutions (neural pool, memory, analogy). Operators alone had overtaken the full room at depth, and on the weakest code seed this lifted four-step programs from 20% to 50%.
+
+### Results (3 seeds, % right, range in brackets)
+
+| | before | now |
+|---|---|---|
+| **code: four-step programs** | 43% (34–48) | **81% (70–87)** |
+| code: familiar / new wording / new combinations | 99 / 95 / 100 | 100 / 93 / 99 |
+| **algebra: three equations** | 11% (6–13) | **49% (21–100)**, 0% wrong |
+| algebra: familiar / wording / shapes / combinations | 100 / 99 / 100 / 100 | 100 / 100 / 100 / 100, **0% wrong on every set** |
+| arithmetic: four-step problems | 1% | 9% |
+| arithmetic: new wording / word problems / combinations / missing info | 70 / 54 / 33 / 78 | 75 / 53 / 34 / 72 |
+| exam (40 hand-written questions) | 32 right, 7 wrong | 33 right, 7 wrong |
+
+The orchestra (one room for all three), before → now:
+
+- **algebra:** combinations never seen together 0% → **100%**, new wordings 78 → 100, three equations 6 → 45;
+- **code:** four steps 24 → 56;
+- **arithmetic:** four steps 4 → 24, missing info 61 → 68, new wordings 74 → 82;
+- **cost:** arithmetic word problems fell 60 → 46.
+
+Algebra's old "derives the right answer and abstains" failure is gone: unsure now means derive.
+
+**What's left:**
+- **Algebra derivations wander.** The 3×3 derivations it finds are valid but roundabout (eliminations in loops before the right pair). One seed solves every system, the other two 21% and 27%. Four times the search width lifts the weak seeds by ~8 points at three times the compute, so the remainder is guidance, not budget.
+- **Arithmetic has no check**, so only fix 1 applies there. Depth moved only 1% → 9%. A room that never invents procedures does better on combinations (50%) and four steps (17%) than the full room, which is within noise of earlier rounds but worth a look.
+
 ## Honest summary
 
 **What works:**
@@ -125,8 +186,8 @@ It holds together and kept two invented procedures. Sharing has a cost, though. 
 - The room thinks harder by itself when its check fails.
 
 **What doesn't yet:**
-- **Depth.** Every modality struggles one step past its training: code 43%, algebra 11%, arithmetic ≤ 10%.
+- **Depth, partly.** Diagnosed as an algorithm problem (more data made it worse) and partly fixed (section 6): code four-step programs 81%, algebra three equations 49% with no wrong answers, arithmetic four-step only 9%.
 - **Specialisation.** The shared population didn't divide work across modalities.
 - **Calibration under sharing.** See algebra above.
 
-**Next:** state analogy (treat a derived configuration as a familiar problem), adopting invented lemmas, and hard routing.
+**Next:** learned guidance for derivations (fewer unknowns is progress, learned rather than written in), a check for arithmetic word problems, and hard routing.

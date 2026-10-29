@@ -252,21 +252,21 @@ Q: Jamal has 15 cookies. Jamal buys 3 bags with 7 cookies in each bag, then give
 
 | strategy | familiar | new wording | numbers ×100 | word problems | new combinations | four steps | distractors | missing info |
 |---|---|---|---|---|---|---|---|---|
-| **the room** | **95% (4%)** | 70% (20%) | **98% (2%)** | 54% (25%) | 33% (48%) | 1% (62%) | **22% (24%)** | **78% (6%)** |
-| room, without inventing procedures | 95% (3%) | 72% (15%) | 97% (2%) | 53% (18%) | 36% (40%) | 8% (44%) | 19% (21%) | 70% (5%) |
-| room, one neural expert | 95% (2%) | **73% (15%)** | 98% (2%) | 53% (19%) | 41% (36%) | **10% (59%)** | 18% (19%) | 60% (7%) |
-| operators alone (no neural, memory or analogy) | 90% (1%) | 63% (10%) | 91% (0%) | 44% (4%) | **44% (12%)** | 0% (12%) | 6% (5%) | 43% (0%) |
+| **the room** | **96% (3%)** | 75% (14%) | 96% (3%) | 53% (22%) | 34% (47%) | 9% (60%) | 21% (28%) | 72% (4%) |
+| room, without inventing procedures | 96% (3%) | **77% (15%)** | 96% (3%) | 58% (25%) | 50% (31%) | **17% (46%)** | **26% (32%)** | **79% (7%)** |
+| room, one neural expert | 96% (2%) | 74% (21%) | **98% (2%)** | 54% (14%) | 43% (40%) | 12% (61%) | 20% (26%) | 66% (11%) |
+| operators alone (no neural, memory or analogy) | 93% (2%) | 72% (3%) | 92% (2%) | 46% (8%) | **59% (7%)** | 0% (1%) | 4% (8%) | 39% (0%) |
 | search alone, no learning | 0% | 0% | 0% | 0% | 0% | 0% | 0% | 0% |
 | council v2 (question → answer), same curriculum | 89% (0%) | 41% (4%) | 96% (0%) | **64% (12%)** | 0% (22%) | 0% (35%) | 16% (29%) | 0% (49%) |
 
 Word problems, distractors and missing info use held-out templates, names and objects; missing info uses kinds of question that were never incomplete in training.
 
-- **Missing information works, and transfers.** 78% of incomplete questions get "not enough information", on kinds of question it never saw incomplete; it says so wrongly on answerable questions at most 2% of the time. The question→answer council can't express it at all: 49% wrong.
-- **Distractors are the weak spot.** 22% right, mostly by abstaining (54%) rather than being wrong. The test asides are sentences it never saw ("The room has 29 windows."), and their numbers often look relevant enough to bind. When it does get them right, 92% of the time it left the aside alone.
-- **Inventing procedures doesn't pay off yet.** Each seed kept one or two procedures, and the room uses them (7–10% of right answers on word problems and distractors), but against the same room that never invents, the differences (−6 to +8 points) are within seed-to-seed noise. A procedure is relevant to only a few percent of questions, so the trials see 5–20 of them each. What it needs: more relevant questions per trial, or problems where depth is the bottleneck.
-- **Four-step problems collapsed** (14% in the previous room, now 1–10% depending on the variant, 0–31% in single runs). The old room got there by the "use every number" habit; with distractors in the world, it has to learn when to stop from relevance instead, and it doesn't yet trust that enough on problems longer than any it has seen.
-- **"Search alone" gets nothing**: the same deliberation with nothing learned can't tell which of the many possible chains is meant. Everything above is learned. And **operators alone** still beat the full room on new combinations (44% vs 33%): the pattern-copying experts are trusted on familiar frames and mislead on new ones (more in `docs/ARCHITECTURE.md` 10.12).
-- **Exam:** 32/40 right, 7 wrong (the council v2 on the same curriculum: 27/40, 0 wrong).
+- **Missing information works, and transfers.** 72% of incomplete questions get "not enough information", on kinds of question it never saw incomplete; it says so wrongly on answerable questions at most 2% of the time. The question→answer council can't express it at all: 49% wrong.
+- **Distractors are the weak spot.** 21% right, mostly by abstaining (54%) rather than being wrong. The test asides are sentences it never saw ("The room has 29 windows."), and their numbers often look relevant enough to bind. When it does get them right, 92% of the time it left the aside alone.
+- **Inventing procedures doesn't pay off yet.** In earlier rounds each seed kept one or two procedures, but against the same room that never invents, the differences were within seed-to-seed noise. This round no seed kept any (every trial's copy was more surprised than the room), and yet the room that tries is behind the one that never does (−16 points on combinations, −9 on four steps). Nothing was adopted, so either the trials themselves cost something or it's seed noise (combinations range 10–50% across seeds). It's on the list to look at.
+- **Four-step problems are still the frontier** (14% in the first room, 1% a round ago, 9% now: 0–26% across seeds). The old room got there by the "use every number" habit; with distractors in the world, it has to learn when to stop from relevance instead. Arithmetic has no check to fail, so of this round's depth fixes (Part 4) only "evidence for, never against" applies here.
+- **"Search alone" gets nothing**: the same deliberation with nothing learned can't tell which of the many possible chains is meant. Everything above is learned. And **operators alone** still beat the full room on new combinations (59% vs 34%): the pattern-copying experts are trusted on familiar frames and mislead on new ones (more in `docs/ARCHITECTURE.md` 10.12 and 11.7).
+- **Exam:** 33/40 right, 7 wrong (the council v2 on the same curriculum: 27/40, 0 wrong).
 
 A step-by-step answer to a question it can't answer:
 
@@ -320,7 +320,7 @@ def solve(xs):
 **How it learns:**
 - **No answers are ever revealed.** The examples are the only check: the room delivers only a program that passes them, and learns from those.
 - **It's graded on hidden inputs** of other lengths and ranges, so fitting the examples isn't enough.
-- **It thinks harder by itself.** When nothing passes, it searches. If that fails, it searches twice as wide, then wider again. As a last resort, it searches once more while trusting its own judge less.
+- **It thinks harder by itself.** When nothing passes, it searches. If that fails, it searches twice as wide, then wider again. Then it searches once more while trusting its own judge less, and last of all without the experts that copy past solutions.
 
 ### Algebra: full derivations by general moves
 
@@ -342,20 +342,48 @@ Q: Given -6x - 4y = -42 and 5(5x - 2y) = 175, what is x plus y?
 
 | code | familiar | new wording | new combinations | four steps (training: ≤ 3) |
 |---|---|---|---|---|
-| **the room** | 99 | 95 | **100** | **43** (34–48 across seeds) |
-| operators alone | 100 | 96 | 92 | 25 |
+| **the room** | 100 | 93 | 99 | **81** (70–87 across seeds; 7% wrong) |
+| operators alone | 99 | 95 | 99 | 79 |
 | search with nothing learned | 91 | 92 | 81 | **0** |
 
 | algebra | familiar | new wording | new equation shapes and letters | moves never combined | three equations (training: ≤ 2) |
 |---|---|---|---|---|---|
-| **the room** | 100 | 99 | 100 | **100** | 11 |
-| operators alone | 100 | 78 | 100 | **0** | 12 |
+| **the room** | 100 | **100** | 100 | 100 | **49** (21–100) |
+| operators alone | 100 | 78 | 100 | 100 | 19 |
 | search with nothing learned | 0 | 0 | 0 | 0 | 0 |
 
-- **It generalises within its reach.** In both modalities it handles new wordings, new combinations, and (in algebra) equation shapes and variable letters it never saw, at or near 100%. The cooperation earns its keep in algebra: on systems needing moves never combined in training, the full room gets 100% and operators alone 0%.
-- **Depth is the frontier, in every modality.** Programs one step longer than training reach 43%, and three-equation systems only 11%.
-- **What fixed most of the code depth problem: doubt after failure.** When even the widest search fails the examples, the room searches once more while trusting its own judge less (a softmax temperature of 3). That lifted four-step programs from 20% (4–46% across seeds) to 43% (34–48%), and put the full room clearly ahead of operators alone (25%).
-- **Learning is what makes search work at depth.** Search with nothing learned solves 0% of four-step programs at every width tried, up to 48.
+The algebra room gave **no wrong answers on any test set**: it either derived the answer or said it wasn't sure.
+
+- **It generalises within its reach.** In both modalities it handles new wordings, new combinations, and (in algebra) equation shapes and variable letters it never saw, at or near 100%.
+- **Depth went from the frontier to mostly working** (see below). Programs one step longer than training: 43% → 81%. Three-equation systems: 11% → 49%, one seed solving all of them.
+- **Learning is what makes search work at depth.** Search with nothing learned solves 0% of four-step programs at every width tried, up to 48, and can't finish an algebra derivation at all.
+
+### Depth: an algorithm problem, not a data problem
+
+**The control.** If depth were about data or scale, more of the same practice would help. Doubling it made all three domains worse: four-step programs 48% → 29%, three-equation systems 13% → 10%, four-step arithmetic 84% → 100% wrong. More practice at the same lengths makes the room surer of the habits that fail one step further out. Removing step numbers changed nothing.
+
+**The cause: learned vetoes.** Traced step by step, in "Square the even numbers and keep the 2 largest" the `squares` operator scored 0.000 after keeping the evens, so nobody even proposed the step. Its own word "square" (+2.4) lost to "even" (−1.8) and "numbers" (−1.9), words it had only ever seen in questions where it wasn't used, and to "a derived list is on the table" (−2.3), because it always came first. Two familiar clauses together veto each other.
+
+**Three general fixes, none written for a particular problem:**
+
+1. **Evidence for, never against.** What an operator reads (the words, what's still open) can only support its operation. Only a prior, and "already applied", count against it.
+2. **A derivation by sound moves is a proof.** Every algebra move keeps the equations true, so deriving the asked variable proves its value.
+   - An answer that doesn't come with such a derivation is a guess, and isn't delivered.
+   - When unsure, the room searches for a derivation, wider each time, and finishes from there.
+   - The domain supplies only "what's asked" and "when it's reached".
+3. **Last resort without the habits.** When every search has failed, search once more without the experts that copy past solutions as a whole (neural pool, memory, analogy). On problems unlike any seen, the familiar frames they copy are what fails.
+
+```text
+Q: Given x + y + z = 6, 2x - y + z = 3 and x + 2y - z = 2, what is z?     (trained on two unknowns at most)
+  Step 1: eliminate x from 2x - y + z = 3 and x + 2y - z = 2:   -5y + 3z = -1
+  ...       (it wanders: four more eliminations, every one valid)
+  Step 6: eliminate y from -20y + 26z = 38 and -5y + 3z = -1:   -70z = -210
+  Step 7: divide both sides of -70z = -210:   z = 3
+  Step 8: so the value is 3
+  => 3   (unsure at first, it searched for a derivation of what the question asks; every move is sound, so those steps are proved)
+```
+
+**What's left:** the 3×3 derivations are valid but roundabout, and two of three seeds find them only a quarter of the time. More search helps a little (4× the width: +8 points at 3× the compute), so the remainder is guidance. Arithmetic has no check to fail, so only fix 1 applies there: four-step problems moved from 1% to 9%.
 
 ### The orchestra: one room for every modality
 
@@ -369,15 +397,16 @@ Results (3 seeds, same practice per domain as the specialists):
 
 | | the orchestra | the specialists |
 |---|---|---|
-| arithmetic: familiar, ×100, word problems | 97%, 100%, 60% | 95%, 98%, 54% |
-| arithmetic: new combinations, missing info | 20%, 61% | 33%, 78% |
-| code: familiar, new wording, combinations, four steps | 99%, 97%, 94%, 24% | 99%, 95%, 100%, 43% |
-| algebra: familiar, new shapes and letters | 100%, 100% | 100%, 100% |
-| algebra: new wording, moves never combined | **78%, 0%** | **99%, 100%** |
+| arithmetic: familiar, new wording, ×100, word problems | 98%, 82%, 98%, 46% | 96%, 75%, 96%, 53% |
+| arithmetic: new combinations, four steps, missing info | 28%, **24%**, 68% | 34%, 9%, 72% |
+| code: familiar, new wording, combinations, four steps | 100%, 95%, 100%, 56% | 100%, 93%, 99%, 81% |
+| algebra: familiar, new wording, new shapes, moves never combined | 100%, 100%, 100%, **100%** | 100%, 100%, 100%, 100% |
+| algebra: three equations | 45% | 49% |
 
-- **It holds together.** One room matches or beats the specialists on familiar arithmetic, word problems and code's 1–3 step tasks, and it kept two invented procedures, `(a + b) ÷ c` and `(a × b) ÷ 100`. At depth it's weaker than the specialist: four-step programs 24% vs 43%.
-- **Sharing has a cost.** On algebra's unseen combinations the orchestra derives the right answer but abstains. The one necessary first move (expanding the brackets) is trusted too little by the shared judge, so the route's probability stays under the answer bar. That's a calibration failure, not a reasoning one. A likely cause: 773 arithmetic practice questions with an equation in them are read as algebra, all solved by gathering first, which tilts the shared experts away from opening with an expansion.
-- **No specialisation emerged.** The neural experts didn't divide the modalities among themselves: each backs all three about evenly (≈1.5 of 1.58 bits).
+- **It holds together.** One room matches the specialists on familiar problems in every modality, beats them on arithmetic's new wordings and four-step problems, and kept an invented procedure, `(a × b) ÷ 100`.
+- **The depth fixes carried over.** Before them, the orchestra derived the right answer to algebra's unseen combinations and abstained (0%): the necessary first move was trusted too little. Now an unsure answer means "derive", and it gets 100%. Three-equation systems 6% → 45%; four-step programs 24% → 56%; four-step arithmetic 4% → 24%.
+- **Costs:** word problems fell from 60% to 46%, and code at depth trails the specialist (56% vs 81%; 0–84% across seeds).
+- **No specialisation emerged.** The neural experts don't divide the modalities among themselves.
 
 Full reports: `results/GENERAL_REPORT.md`, `results/ORCHESTRA_REPORT.md`. The design is in `docs/ARCHITECTURE.md` section 11.
 

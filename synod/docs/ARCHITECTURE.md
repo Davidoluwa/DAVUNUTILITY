@@ -330,7 +330,7 @@ Runs are about twice as fast as before this round, with more going on:
 
 ### 10.12 Where it stands (3 seeds, `results/ROOM_REPORT.md`)
 
-Right answers (wrong): familiar 95% (4%), new wording 70% (20%), numbers ×100 98% (2%), word problems 54% (25%), new combinations 33% (48%), four steps 1% (62%), distractors 22% (24%), missing information 78% (6%). Without inventing: 95, 72, 97, 53, 36, 8, 19, 70. The question→answer council on the same curriculum: 89, 41, 96, 64, 0, 0, 16, 0 (it can't say "not enough information"; 49% wrong there). The same deliberation with nothing learned: 0 everywhere. Exam: 32/40 (7 wrong) vs the council's 27/40 (0 wrong, 13 abstained).
+Right answers (wrong), after the depth round (11.7): familiar 96% (3%), new wording 75% (14%), numbers ×100 96% (3%), word problems 53% (22%), new combinations 34% (47%), four steps 9% (60%), distractors 21% (28%), missing information 72% (4%). Without inventing: 96, 77, 96, 58, 50, 17, 26, 79. Operators alone: 93, 72, 92, 46, 59, 0, 4, 39. The question→answer council on the same curriculum: 89, 41, 96, 64, 0, 0, 16, 0 (it can't say "not enough information"; 49% wrong there). The same deliberation with nothing learned: 0 everywhere. Exam: 33/40 (7 wrong) vs the council's 27/40 (0 wrong, 13 abstained).
 
 Limitations and next steps:
 
@@ -363,7 +363,7 @@ Everything else is shared code. Arithmetic's behaviour was checked unchanged thr
 
 ### 11.2 Verifiable problems: no teacher, and thinking harder when the check fails
 
-When a problem carries its own check (code: the examples), the room delivers only an answer that passes it, and learns from what passes, with no answers revealed, ever. When nothing it deliberates passes, it searches (its own experts and judge guiding a beam), and if that fails it searches again twice as wide, and again (6, 12, 24 routes), stopping as soon as something passes. Search compute counts towards the cost of the question. Programs are graded on hidden inputs of other lengths and ranges, so passing the examples isn't enough.
+When a problem carries its own check (code: the examples), the room delivers only an answer that passes it, and learns from what passes, with no answers revealed, ever. When nothing it deliberates passes, it searches (its own experts and judge guiding a beam), and if that fails it searches again twice as wide, and again (6, 12, 24 routes), then once more trusting its judge less, and last without the experts that propose by habit (11.7), stopping as soon as something passes. Search compute counts towards the cost of the question. Programs are graded on hidden inputs of other lengths and ranges, so passing the examples isn't enough.
 
 When a problem doesn't carry a check (algebra), the room can still think harder when it would otherwise abstain: deliberate again with a wider beam and with each operator offering its three best ways to apply itself instead of one. And since every algebra move is sound, a derivation of what the question asks is a proof: the same escalating search then looks for one (11.7).
 
@@ -381,9 +381,13 @@ One room for every modality: one population (all domains' operators, one neural 
 
 ### 11.6 Where it stands (3 seeds; `results/GENERAL_REPORT.md`, `results/ORCHESTRA_REPORT.md`)
 
+Before the depth round (11.7):
+
 - **Code:** familiar 99%, new wordings 95%, unseen combinations 100%, four-step programs 43% (34-48% across seeds). Operators alone: 100, 96, 92, 25. Search with nothing learned: 91, 92, 81, 0.
 - **Algebra:** familiar 100%, new wordings 99%, unseen equation shapes with unseen letters 100%, moves never combined 100%, three equations 11%. Operators alone: 100, 78, 100, 0, 12. Nothing learned: 0 everywhere.
-- **Orchestra** (one room, all three): arithmetic familiar 97% / ×100 100% / word problems 60% / combinations 20% / missing information 61%; code 99 / 97 / 94 / 24; algebra familiar and new shapes 100%, new wordings 78%, moves never combined 0% (it derives the right answer and abstains: see below).
+- **Orchestra** (one room, all three): arithmetic familiar 97% / ×100 100% / word problems 60% / combinations 20% / missing information 61%; code 99 / 97 / 94 / 24; algebra familiar and new shapes 100%, new wordings 78%, moves never combined 0% (it derived the right answer and abstained: see below).
+
+After it: code 100 / 93 / 99 / **81** (70-87); algebra 100 / 100 / 100 / 100 / **49** (21-100), with no wrong answers on any algebra test set; orchestra algebra combinations **100%**, three equations 45%, code four steps 56%, arithmetic four steps 24%, word problems 46%.
 
 What was tried along the way:
 
@@ -399,7 +403,49 @@ What was tried along the way:
 
 Limitations and next steps:
 
-- **Depth.** Every modality breaks one step past its training: four-step programs, three-equation systems, four-step arithmetic. The experts learn which move fits a familiar situation; a situation with one more variable or step than ever seen (a two-variable equation left over after one elimination in a three-equation system) has never been observable, so "keep eliminating" has never been learned. Two directions: let the room treat a derived configuration as a familiar problem (state analogy over the domain's descriptions), and adopt the procedures it invents (it found `value(divide(eliminate(a, b, c)))`, the 2×2 lemma, but dropped it because the trial never needed it).
-- **Pattern-copying versus novelty.** In arithmetic on new combinations, operators alone beat the full room: the neural pool, memory and analogy are trusted where familiar frames were always right, and mislead where they aren't. In code, doubt after a failed check turned this around (the full room 43%, operators alone 25%, on four-step programs); arithmetic has no check to fail.
-- **Calibration under sharing.** In the orchestra, a necessary but unfamiliar first move (expanding brackets in a system) is trusted too little by the shared judge, so the right derivation is found and abstained on. A likely cause: the orchestra reads 773 of arithmetic's practice questions as algebra (every arithmetic question with an equation in it), all single equations solved by gathering first. That's 39% more algebra practice, but tilted towards one opening move.
+- **Depth** (11.7). Diagnosed as an algorithm problem and largely fixed for problems with a check or sound moves: four-step programs 81%, three-equation systems 49% with no wrong answers. What's left: algebra's derivations are valid but wander (two seeds of three find one only a quarter of the time), and arithmetic, with no check, only reaches 9% on four-step problems.
+- **Pattern-copying versus novelty.** The neural pool, memory and analogy are trusted where familiar frames were always right, and mislead where they aren't. In arithmetic, operators alone beat the full room on new combinations (59% vs 34%). Where there's a check, a last search without them now recovers much of it (11.7).
+- **Calibration under sharing** (fixed for algebra, 11.7). In the orchestra, a necessary but unfamiliar first move (expanding brackets in a system) was trusted too little, so the right derivation was found and abstained on (0%). An unsure algebra answer now means "derive": 100%.
 - **No specialisation across modalities.** The neural experts back all three modalities about evenly (≈1.5 of 1.58 bits). Hard routing with load balancing remains untried.
+
+### 11.7 Depth: an algorithm problem, not a data problem
+
+**The control.** Every modality broke one step past its training. Twice the practice made all three worse (seed 0): four-step programs 48% → 29%, three-equation systems 13% → 10% (new wordings 96% → 76%), four-step arithmetic 0% right with 84% → 100% wrong. More practice at the same lengths entrenches the habits that fail one step further out, so scale isn't the fix.
+
+**Ruled out: position.** Removing the step number from every expert, indexing history from the end and dropping "how many steps so far" from the judge's "none of these": code 48% → 48%, algebra 13% → 9%, arithmetic 0% → 2% (and missing information 66% → 59%). Cut.
+
+**Diagnosed: vetoes.** Tracing the judge's gate and every operator's readiness along the correct solution (per step: the right step's gate, its rank, whether anyone proposed it, and the features pushing it down):
+
+- Code, "Square the even numbers and keep the 2 largest, biggest first": after `evens`, `squares` had readiness 0.000 and so wasn't even proposed. Its own cue `w:square` was +2.35. It lost to `w:numbers` −1.94, `w:even` −1.79, `w:the` −1.63, `free:S1` −2.32 and `t:1` −1.44. A signed logistic over the whole question learns what *never co-occurred* with its operation as negative evidence. In training squares never came in a question about evens and never after a first step, so two familiar clauses together veto each other's operations. Along the correct path, the needed step was unproposed 45%, 100% and 48% of the time at steps 1–3.
+- Algebra, 3×3 systems: the judge gave 1.00 to each of its own moves (eliminate, then divide a two-variable result, then repeat an elimination it had already made). It was never unsure, so thinking harder never triggered.
+
+**Fix 1: evidence-only operators** (`learner.EvidenceLogLinear`, `experts.OperatorExpert`). The firing model's weights are clipped at zero after every step, except a prior (`bias`) and `again` (this operation was already applied). Everything an operator reads (the question's words, the words around the facts still open and what those facts look like) can support its operation and never veto it; it no longer reads how far the solution has got (see the table). Binding stays a signed softmax (choosing among alternatives is a competition, not a veto). Variants tried:
+
+| variant | code, four steps (3 seeds) | arithmetic (3 seeds) |
+|---|---|---|
+| signed (before) | 43% (34–48) | familiar 93, word problems 54, combinations 32, four steps 2, missing 80 |
+| **evidence-only, from the problem and the table** (kept) | 63% (35–88) | familiar 95, word problems 50, combinations 30, four steps 8, missing 71 |
+| evidence-only, also reading where the solution stands (step number, previous operation, kinds of fact unused) | 61% (20–84) | familiar 95, word problems 60, combinations 33, four steps 1, missing 77 |
+
+Reading where the solution stands, even as evidence only, revived two-equation habits on three-equation systems (40% → 17–28% over 3 seeds, with derivations), so it was cut despite helping word problems.
+
+(These variant numbers come from matched 3-seed experiment runs; the official reports are quoted below.)
+
+**Fix 2: derivations as proofs** (`Domain.unknowns`, `Domain.reached`, `Room._derive`). A domain whose moves are sound can name what a problem asks to be found (algebra: the variables the question mentions) and say when a workspace has reached it (each one read off a solved equation). Then, answering for real:
+
+1. an answer whose route didn't reach the unknowns is a guess and isn't delivered (in practice too, so guesses aren't taught);
+2. unsure or guessing, the room escalates a search for a derivation (the same escalation as verifiable problems: 6, 12, 24 routes, then 24 with doubt, then 24 without habits) and deliberates from the derived state as usual to finish. The derived facts are proved, so the delivered probability is the judge's over the finishing steps only.
+
+Not during practice: on seed 0, deriving during practice as well gave 13% on three-equation systems against 73% without, because the room learned from its own roundabout derivations.
+
+| | three equations (3 seeds) | wrong answers there |
+|---|---|---|
+| before | 11% (6–13) | 10% |
+| derivations, evidence-only operators reading where the solution stands | 17% (11–21) | 0% |
+| **derivations, evidence-only operators, last resort without habits** (kept) | **49% (21–100)** | **0%** |
+
+**Fix 3: a last resort without habits** (`Expert.habit`, `RoomConfig.escalate`). Neural experts, memory and analogy propose by resemblance to past solutions as a whole. After fix 1, operators alone overtook the full room at depth (four-step programs 78% vs 61%; three-equation systems 59% vs 17%). So the escalation ends with one more search in which the habit-based experts stay silent: on the weakest code seed four-step programs went 20% → 50%. It only runs once everything else has failed the check.
+
+Official results (3 seeds; `results/GENERAL_REPORT.md`): code four steps 43% → **81%** (70–87; operators alone 79%), algebra three equations 11% → **49%** (21–100; operators alone 19%) with no wrong answers on any algebra test set; arithmetic (`results/ROOM_REPORT.md`) four steps 1% → 9%, the rest within seed noise except missing information 78% → 72%; orchestra algebra combinations 0% → 100%.
+
+Search budget: widening the escalation to 48 and 96 routes takes the two weak algebra seeds from 21–23% to 26–34% at three times the compute. The derivations found are valid but wander (repeated eliminations before the right pair), so better guidance, not more search, is what's left.
