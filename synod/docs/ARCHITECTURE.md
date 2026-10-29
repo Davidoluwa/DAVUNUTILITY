@@ -377,3 +377,27 @@ Equations and systems of equations as written (`3(x + 4) - 2 = 5x - 6`; `2x + 3y
 ### 11.5 The orchestra (`room/orchestra.py`)
 
 One room for every modality: one population (all domains' operators, one neural pool, one memory, one analogy, one goal expert, every reviewer, 76 experts) and one judge, meeting arithmetic, code and algebra mixed in one stream with nothing saying which is which. Each domain's reader says whether it recognises a problem (code: examples with arrows; algebra: an equation its parser reads; arithmetic: anything else), and the problem is read by the first that does. Operators are shared: they bind whatever facts are on the table, so a problem read as algebra can still use an arithmetic operation ("Is t a prime number?" after solving for t). Reviewers that only make sense for one domain (arithmetic's numeric checks) say so. The judge reads which domain a problem came from and, per expert, its trust on that domain; nothing else is told.
+
+### 11.6 Where it stands (3 seeds; `results/GENERAL_REPORT.md`, `results/ORCHESTRA_REPORT.md`)
+
+- **Code:** familiar 99%, new wordings 94%, unseen combinations 99%, four-step programs 20% (4-46% across seeds). Operators alone: 100, 95, 96, 42. Search with nothing learned: 91, 92, 81, 0.
+- **Algebra:** familiar 100%, new wordings 99%, unseen equation shapes with unseen letters 100%, moves never combined 100%, three equations 11%. Operators alone: 100, 78, 100, 0, 12. Nothing learned: 0 everywhere.
+- **Orchestra** (one room, all three): arithmetic familiar 97% / ×100 100% / word problems 60% / combinations 20% / missing information 61%; code 99 / 97 / 94 / 24; algebra familiar and new shapes 100%, new wordings 78%, moves never combined 0% (it derives the right answer and abstains: see below).
+
+What was tried along the way:
+
+| idea | result |
+|---|---|
+| searching wider when the check fails (6 → 12 → 24) | four-step programs 25% → 46% on one seed; nothing-learned search stays at 0% at any width |
+| a softmax temperature on every widening | doubled a weak seed (10% → 22%) but cut a strong one (55% → 32%) |
+| ... only as a last resort, after the plain widenings | kept: the weak seed doubles and the strong one is unchanged; costs compute only on problems that failed everything else |
+| a wider deliberation beam on three-equation systems | no change: the beam wasn't full. Each operator proposed only its best binding, and the second elimination needs a different pair |
+| more bindings per operator when the room would abstain | in place for algebra ("think harder"); three-equation systems 0% → 7% |
+| the judge reading what a candidate's result looks like | in place for algebra (values of asked vs other variables); the room had been solving for the wrong variable |
+
+Limitations and next steps:
+
+- **Depth.** Every modality breaks one step past its training: four-step programs, three-equation systems, four-step arithmetic. The experts learn which move fits a familiar situation; a situation with one more variable or step than ever seen (a two-variable equation left over after one elimination in a three-equation system) has never been observable, so "keep eliminating" has never been learned. Two directions: let the room treat a derived configuration as a familiar problem (state analogy over the domain's descriptions), and adopt the procedures it invents (it found `value(divide(eliminate(a, b, c)))`, the 2×2 lemma, but dropped it because the trial never needed it).
+- **Pattern-copying versus novelty.** In code at depth, as in arithmetic on new combinations, operators alone beat the full room: the neural pool, memory and analogy are trusted where familiar frames were always right, and mislead where they aren't.
+- **Calibration under sharing.** In the orchestra, a necessary but unfamiliar first move (expanding brackets in a system) is trusted too little by the shared judge, so the right derivation is found and abstained on. The specialist room had more algebra-specific trust.
+- **No specialisation across modalities.** The neural experts back all three modalities about evenly (≈1.5 of 1.58 bits). Hard routing with load balancing remains untried.

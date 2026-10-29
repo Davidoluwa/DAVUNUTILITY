@@ -9,11 +9,12 @@ Synod is a working prototype of a neurosymbolic intelligence system where:
 - who does what is **not a programmed gate**. A router and a judge are trained during training, from which answers turned out right, the way a mixture-of-experts layer trains its gate;
 - the symbolic nodes **learn and adapt** too: they learn how to search, invent concepts, learn what words mean, and revise their beliefs.
 
-It runs in three settings:
+It runs in four settings:
 
 1. **Sequences**: "what comes next?" tasks with faults and distribution shift injected on purpose. This world shows the self-organisation and self-healing.
 2. **Maths**: the council learns what maths questions *mean* purely from answered examples, then answers new ones, including wordings, word problems and combinations it has never seen.
 3. **The room**: a much larger council (43 small experts) that works maths problems out **step by step**, with a deliberation behind every step, on a denser curriculum of one- to four-step problems, some with numbers that don't matter and some that can't be answered. Every expert volunteers at every step; they all learn in the same room from the worked solutions the room discovers itself, and it invents new operations from recurring pieces of them.
+4. **One engine, many modalities**: the same room, unchanged, **writes programs** from a description and examples (graded on hidden inputs, learning with no teacher), and **solves equations and systems** by general algebraic moves, writing out every line. A domain supplies only a reader, its operations and its check. In the **orchestra**, one room of 78 experts handles all three modalities from a single mixed stream.
 
 Plain Python + NumPy, no other dependencies.
 
@@ -29,7 +30,9 @@ python -m synod --seeds 10                  # the sequence world -> results/REPO
 python -m synod.room train                  # the room (~5 min): 43 experts learn the dense curriculum
 python -m synod.room ask "Ann has 12 apples. She buys 3 bags with 5 apples in each, then gives away 4. How many apples does Ann have now?"
 python -m synod.room report --seeds 3       # room vs ablations and the council, exam (~25 min) -> results/ROOM_REPORT.md + room_viewer.html
-python -m unittest discover -s tests -t .   # 51 tests
+python -m synod.room general --seeds 3      # the same room on code and algebra -> results/GENERAL_REPORT.md
+python -m synod.room orchestra --seeds 3    # one room for every modality -> results/ORCHESTRA_REPORT.md
+python -m unittest discover -s tests -t .   # 59 tests
 ```
 
 ---
@@ -287,6 +290,95 @@ The **[room viewer](results/room_viewer.html)** shows every step of the 40 exam 
 
 ---
 
+# Part 4: One engine, many modalities
+
+The room's machinery no longer knows it's doing arithmetic. That covers the experts, the judge, deliberation, the search for worked solutions, learning, sleep and invention. A **domain** supplies only:
+
+- a reader (problem text → facts);
+- its operations (signature, result kind, how to run, how to say);
+- its constants, and when two results match;
+- optionally, how a fact looks at a glance, its own reviewers, and a fallback search.
+
+Arithmetic is one domain. Its behaviour stayed byte-identical through the change (checked with a fingerprint of every answer and probability).
+
+### Code: a program from a description and examples
+
+```text
+Q: Keep the 3 largest numbers, biggest first. Examples: [5, 1, 4, 9, 2] -> [9, 5, 4]; [3, 8, 1, 7] -> [8, 7, 3]
+
+def solve(xs):
+    s1 = sorted(xs, reverse=True)
+    s2 = s1[:3]
+    return s2
+```
+
+**What the domain supplies:** 26 list operations, each with its Python form, plus a reader. Every step runs on all the examples at once, so a worked solution is a program.
+
+**How it learns:**
+- **No answers are ever revealed.** The examples are the only check: the room delivers only a program that passes them, and learns from those.
+- **It's graded on hidden inputs** of other lengths and ranges, so fitting the examples isn't enough.
+- **It thinks harder by itself.** When nothing passes, it searches. If that fails, it searches twice as wide, then wider again. As a last resort, it searches once more while trusting its own judge less.
+
+### Algebra: full derivations by general moves
+
+```text
+Q: Given -6x - 4y = -42 and 5(5x - 2y) = 175, what is x plus y?
+  expand 5(5x - 2y) = 175:                                   25x - 10y = 175
+  eliminate y from -6x - 4y = -42 and 25x - 10y = 175:       160x = 1120
+  divide both sides of 160x = 1120:                          x = 7
+  eliminate x from -6x - 4y = -42 and 25x - 10y = 175:       -160y = 0
+  divide both sides of -160y = 0:                            y = 0
+  7 + 0 = 7                                                  => 7   [correct]
+```
+
+**The moves:** seven general rules (expand, gather terms, divide both sides, isolate, substitute, eliminate, read off a value) plus arithmetic on values found. There is **no solve move**. Which move, on what, in what order, is learned from answers alone, with half the practice questions revealing the number and never the derivation.
+
+**Perception:** the domain also says what each equation looks like (raw, gathered, isolated, solved, about what's asked). The experts and the judge read it.
+
+### Results (3 seeds, % right)
+
+| code | familiar | new wording | new combinations | four steps (training: ≤ 3) |
+|---|---|---|---|---|
+| **the room** | 99 | 94 | 99 | 20 (4–46 across seeds) |
+| operators alone | 100 | 95 | 96 | 42 |
+| search with nothing learned | 91 | 92 | 81 | **0** |
+
+| algebra | familiar | new wording | new equation shapes and letters | moves never combined | three equations (training: ≤ 2) |
+|---|---|---|---|---|---|
+| **the room** | 100 | 99 | 100 | **100** | 11 |
+| operators alone | 100 | 78 | 100 | **0** | 12 |
+| search with nothing learned | 0 | 0 | 0 | 0 | 0 |
+
+- **It generalises within its reach.** In both modalities it handles new wordings, new combinations, and (in algebra) equation shapes and variable letters it never saw, at or near 100%. The cooperation earns its keep in algebra: on systems needing moves never combined in training, the full room gets 100% and operators alone 0%.
+- **Depth is the frontier, in every modality.** Programs one step longer than training (20%) and three-equation systems (11%) are where it breaks. On four-step programs the operators alone do better than the full room on average (42% vs 20%), the same pattern-copying problem as in arithmetic. Seeds swing wildly there (4–46%).
+- **Learning is what makes search work at depth.** At the same search budget, the learned room solved up to 55% of four-step programs on its best seed; search with nothing learned solves 0% at every width tried, up to 48.
+
+### The orchestra: one room for every modality
+
+**One population, one judge:** 78 experts, covering every domain's operators, one neural pool, one memory, one analogy, one goal expert and every reviewer.
+
+**One stream:** arithmetic, code and algebra arrive mixed, with nothing saying which is which. Each domain's reader recognises its own problems.
+
+**Shared tools:** operators bind whatever facts are on the table, so a problem read as algebra can still use an arithmetic operation ("Is t a prime number?" after solving for t).
+
+Results (3 seeds, same practice per domain as the specialists):
+
+| | the orchestra | the specialists |
+|---|---|---|
+| arithmetic: familiar, ×100, word problems | 97%, 100%, 60% | 95%, 98%, 54% |
+| arithmetic: new combinations, missing info | 20%, 61% | 33%, 78% |
+| code: familiar, new wording, combinations, four steps | 99%, 97%, 94%, 24% | 99%, 94%, 99%, 20% |
+| algebra: familiar, new shapes and letters | 100%, 100% | 100%, 100% |
+| algebra: new wording, moves never combined | **78%, 0%** | **99%, 100%** |
+
+- **It holds together.** One room matches or beats the specialists on familiar arithmetic, word problems and all of code, and it kept two invented procedures, `(a + b) ÷ c` and `(a × b) ÷ 100`.
+- **Sharing has a cost.** On algebra's unseen combinations the orchestra derives the right answer but abstains. The one necessary first move (expanding the brackets) is trusted too little by the shared judge, so the route's probability stays under the answer bar. That's a calibration failure, not a reasoning one.
+- **No specialisation emerged.** The neural experts didn't divide the modalities among themselves: each backs all three about evenly (≈1.5 of 1.58 bits).
+
+Full reports: `results/GENERAL_REPORT.md`, `results/ORCHESTRA_REPORT.md`. The design is in `docs/ARCHITECTURE.md` section 11.
+
+---
+
 ## What changed from v1, and what got cut
 
 v1 ran a hand-designed auction. Each node decided whether to look and bid, and the bids were ranked through each peer's trust map. A lead then bought reviews by a value-of-information formula, and rival answers were reconciled by a fixed rule. Every one of those steps was a formula someone wrote. v2 replaces the decision-making with two models trained on outcomes, and deletes the rest:
@@ -351,10 +443,14 @@ synod/
       experts.py     the population: operators, neural pool, memory, analogy, goal, checker, estimator, lexicon, relevance
       room.py        deliberation (judge, beam, pooled routes), finding worked solutions, learning, sleep, trials
       procedures.py  noticing recurring pieces of solutions, abstracting them, rewriting solutions with them
+      general.py     the same room on code and algebra, against baselines
+      orchestra.py   one room for every modality
+    code/            the code domain: list operations with their Python forms, a reader, the curriculum
+    algebra/         the algebra domain: exact linear forms, seven general moves, a reader, the curriculum
       transcript.py, trace.py, viewer.html    worked solutions with their deliberation, as text and as a page
       experiment.py, report.py, exam.py, __main__.py
     transcript.py    renders a deliberation as text
-  tests/             51 tests (unittest)
+  tests/             59 tests (unittest)
   docs/ARCHITECTURE.md   the mechanics and the maths behind them
   results/           REPORT.md (sequences), MATHS_REPORT.md, EXAM_REPORT.md, ROOM_REPORT.md, council_viewer.html, room_viewer.html
 ```

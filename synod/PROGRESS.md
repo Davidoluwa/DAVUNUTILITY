@@ -81,4 +81,50 @@ Results after 2,000 practice questions (seed 0):
 - **The frontier is three-equation systems.** The room has never seen a three-variable equation, so "eliminate removes one variable" was never observable to it. Without a handwritten strategy it derives true facts (e.g. z = 3), but rarely the asked one. Thinking harder (a wider beam, more options per operator) moved this from 0% to 7%.
 - **Invention found the 2×2 lemma by itself:** `value(divide(eliminate(a, b, c)))`, i.e. eliminate, divide, read off. It was tried and dropped, because the copy never needed it on the trial's questions.
 
-## 4. Evaluation across all three, docs (to do)
+## 4. Three seeds each, against baselines (done)
+
+| code | familiar | new wording | new combinations | four steps |
+|---|---|---|---|---|
+| the room | 99% | 94% | 99% | 20% (4–46%) |
+| operators alone | 100% | 95% | 96% | 42% |
+| search with nothing learned | 91% | 92% | 81% | 0% |
+
+| algebra | familiar | new wording | new shapes and letters | moves never combined | three equations |
+|---|---|---|---|---|---|
+| the room | 100% | 99% | 100% | **100%** | 11% |
+| operators alone | 100% | 78% | 100% | **0%** | 12% |
+| search with nothing learned | 0% | 0% | 0% | 0% | 0% |
+
+## 5. The orchestra: one room for every modality (done)
+
+**One population, one judge:** 78 experts and one judge.
+
+**One stream:** arithmetic, code and algebra arrive mixed in one stream of practice, with nothing saying which is which. Each domain's reader recognises its own problems.
+
+**Shared tools:** operators bind whatever is on the table, so algebra can borrow arithmetic's `is_prime`.
+
+| | the orchestra | the specialists |
+|---|---|---|
+| arithmetic: familiar / ×100 / word problems | 97 / 100 / 60 | 95 / 98 / 54 |
+| arithmetic: new combinations / missing info | 20 / 61 | 33 / 78 |
+| code: familiar / wording / combinations / four steps | 99 / 97 / 94 / 24 | 99 / 94 / 99 / 20 |
+| algebra: familiar / new shapes | 100 / 100 | 100 / 100 |
+| algebra: new wording / moves never combined | 78 / **0** | 99 / **100** |
+
+It holds together and kept two invented procedures. Sharing has a cost, though: on algebra's unseen combinations the orchestra **derives the right answer and abstains**. The shared judge trusts the necessary first move (expanding the brackets) too little, so the route's probability stays under the answer bar. No modality specialisation emerged among the neural experts.
+
+## Honest summary
+
+**What works:**
+- One engine, three modalities, little domain code.
+- Learning from examples alone (code) and from answers alone (algebra).
+- Full derivations.
+- New wordings, new shapes and new combinations at or near 100% in code and algebra.
+- The room thinks harder by itself when its check fails.
+
+**What doesn't yet:**
+- **Depth.** Every modality breaks one step past its training (20%, 11%, ≤ 10%).
+- **Specialisation.** The shared population didn't divide work across modalities.
+- **Calibration under sharing.** See algebra above.
+
+**Next:** state analogy (treat a derived configuration as a familiar problem), adopting invented lemmas, and hard routing.
