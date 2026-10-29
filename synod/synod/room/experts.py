@@ -549,6 +549,8 @@ class NeuralExpert(Expert):
                                      f"thinks it's finished ({pk:.0%})")]
                 continue
             if op == INSUFFICIENT:
+                if not scene.domain.missing_info:  # not an outcome this kind of problem has
+                    continue
                 ev = ("n", conf_bucket(pk), "cant")
                 return [Proposal(self.name, self.kind, CANT, UNKNOWABLE, self.calibrated(ev, pk), ev,
                                  f"thinks the question doesn't give enough ({pk:.0%})")]

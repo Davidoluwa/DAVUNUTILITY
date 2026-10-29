@@ -72,7 +72,9 @@ class RoomConfig:
     search_width: int = 6
     search_alternatives: int = 3  # bindings per operator considered while searching
     speak_at: float = 0.01  # an operator with less than this share of the operators' readiness stays quiet
-    escalate: tuple = ((6, 3), (12, 3), (24, 4))  # verifiable problems: search wider while nothing passes the check
+    # verifiable problems: search wider while nothing passes the check, and as a last resort trust the judge's
+    # preferences less (a softmax temperature of 3): an open mind once the best judgement has failed
+    escalate: tuple = ((6, 3), (12, 3), (24, 4), (24, 4, 3.0))
     think_harder: tuple = ()  # (beam, bindings per operator) to retry with, wider each time, while the room would abstain
     stop_habits: bool = False  # the judge reading the step number and previous operation on "answer" (habits that break on longer problems)
     judge_lr: float = 0.3
@@ -338,7 +340,9 @@ class Room:
         return {"null": 1.0, f"null|t:{min(len(ws.steps), 5)}": 1.0}
 
     def gate(self, ws, cands) -> list:
-        return softmax([self.judge.score(self.none_features(ws))] + [self.judge.score(c.feats) for c in cands])
+        scores = [self.judge.score(self.none_features(ws))] + [self.judge.score(c.feats) for c in cands]
+        t = getattr(self, "_temperature", 1.0)
+        return softmax(scores if t == 1.0 else [z / t for z in scores])
 
     # -- deliberation ------------------------------------------------------
     def deliberate(self, scene: Scene, width: int, bench: Bench):
@@ -431,8 +435,9 @@ class Room:
         keep = (cfg.search_width, cfg.search_alternatives)
         path = None
         try:  # think harder only while nothing passes: a wider search each time
-            for level, (width, alternatives) in enumerate(cfg.escalate):
+            for level, (width, alternatives, *temp) in enumerate(cfg.escalate):
                 cfg.search_width, cfg.search_alternatives = width, alternatives
+                self._temperature = temp[0] if temp else 1.0  # each failure: doubt the judge's preferences more
                 path = self.search(scene, scene.target, bench, fallback=level == 0)
                 res.cost += self.search_cost + 0.02 * scene.cache.pop("fallback_runs", 0)
                 res.effort = width
@@ -440,6 +445,7 @@ class Room:
                     break
         finally:
             cfg.search_width, cfg.search_alternatives = keep
+            self._temperature = 1.0
         res.searched = True
         if path is not None:
             route, cost = self._route(scene, path, bench)

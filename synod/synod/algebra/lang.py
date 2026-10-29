@@ -523,7 +523,9 @@ class Algebra(Domain):
         return tuple(out)
 
     def matches(self, v, target) -> bool:
-        if v is None or target is None or isinstance(v, (Eq, str)):
+        if v is None or target is None or isinstance(v, (Eq, str)) or not isinstance(v, (Fraction, int)):
+            return v is target
+        if not isinstance(target, (Fraction, int, float)):
             return False
         return abs(float(v) - float(target)) <= 1e-9 * max(1.0, abs(float(target)))
 

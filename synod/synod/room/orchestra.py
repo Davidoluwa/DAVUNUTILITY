@@ -141,7 +141,11 @@ def run(seed: int = 0, per: int = 100, n: dict | None = None):
 
 def _job(args):
     seed, per, n = args
-    return seed, run(seed, per, n)
+    try:
+        return seed, run(seed, per, n)
+    except Exception as e:  # one seed failing mustn't lose the others
+        import traceback
+        return seed, {"error": f"{e!r}\n{traceback.format_exc()}"}
 
 
 def compare(seeds, per: int = 100, n: dict | None = None, processes: int = 4):
@@ -151,7 +155,10 @@ def compare(seeds, per: int = 100, n: dict | None = None, processes: int = 4):
             out = pool.map(_job, [(s, per, n) for s in seeds])
     except (OSError, ImportError):
         out = [_job((s, per, n)) for s in seeds]
-    return dict(out)
+    for s, r in out:
+        if "error" in r:
+            print(f"seed {s} failed: {r['error']}")
+    return {s: r for s, r in out if "error" not in r}
 
 
 def write(results, path="results/ORCHESTRA_REPORT.md", specialists: dict | None = None):
