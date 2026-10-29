@@ -647,6 +647,14 @@ class Domain:
         """What a verifiable problem's answer must be (e.g. the examples' outputs)."""
         return None
 
+    def unknowns(self, reading):
+        """What the problem asks to be found, when finding it is a matter of
+        derivation by sound moves (e.g. the variables a question asks about).
+        A derived fact is then proved, not guessed: when unsure, the room can
+        search for a derivation that reaches these and finish from there.
+        None: the domain has no such notion."""
+        return None
+
     # working
     def grounding(self, ws, step):
         return None
@@ -660,6 +668,11 @@ class Domain:
         if value is UNKNOWABLE or target is UNKNOWABLE:
             return value is target
         return value is not None and value == target
+
+    def reached(self, ws, goal) -> bool:
+        """Has the workspace's latest step reached the goal: a revealed answer,
+        a verifiable problem's target, or the problem's unknowns?"""
+        return self.matches(ws.answer, goal)
 
     def fallback(self, scene, label):
         """Programs to try when the room's own search finds nothing (none by default)."""

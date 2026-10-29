@@ -41,6 +41,30 @@ class SparseLogLinear:
         return sorted(parts, key=lambda p: -abs(p[1]))[:top]
 
 
+class EvidenceLogLinear(SparseLogLinear):
+    """A log-linear model whose features can only be evidence *for* the
+    outcome: their weights never go below zero. Only the features named in
+    ``signed`` (a prior, say) can count against it.
+
+    An operator that learns from a signed bag of words learns vetoes as well
+    as cues ("squares never comes when the question says *even*"), because in
+    training each word only ever appeared alongside certain others. Put two
+    familiar clauses together and each one's words veto the other's
+    operation. Non-negative evidence cannot learn a veto, so what a familiar
+    clause asks for is still asked for in a new combination."""
+
+    def __init__(self, lr: float = 0.3, decay: float = 0.999, l2: float = 1e-4, signed=("bias",)):
+        super().__init__(lr, decay, l2)
+        self.signed = frozenset(signed)
+
+    def step(self, feats: dict, grad: float) -> None:
+        super().step(feats, grad)
+        W, signed = self.w, self.signed
+        for f in feats:
+            if W[f] < 0.0 and f not in signed:
+                W[f] = 0.0
+
+
 def sigmoid(z: float) -> float:
     if z >= 0:
         return 1.0 / (1.0 + math.exp(-z))

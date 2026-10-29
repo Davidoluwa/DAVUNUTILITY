@@ -36,7 +36,7 @@ from itertools import repeat
 import numpy as np
 
 from ..beliefs import Competence, conf_bucket
-from ..learner import SparseLogLinear, sigmoid, softmax
+from ..learner import EvidenceLogLinear, SparseLogLinear, sigmoid, softmax
 from ..maths.mathlang import read
 from ..maths.nodes import _SparseMLP, numeric_features, squash
 from ..protocol import NEURAL, SYMBOLIC
@@ -65,6 +65,7 @@ class Scene:
         self.context = self.domain.context(r)
         self.slots = r.slots
         self.target = self.domain.target(r)  # what a verifiable problem's answer must be
+        self.unknowns = self.domain.unknowns(r)  # what it asks to be derived (None: not that kind of problem)
         self._hash: dict = {}
         self.cache: dict = {}  # per-question scratch (e.g. an operator's best bindings in a state)
 
@@ -240,7 +241,17 @@ class _KeyedPairs(dict):
 
 class OperatorExpert(Expert):
     """Knows one exact operation. Learns when it's the right next step and
-    which facts to apply it to."""
+    which facts to apply it to.
+
+    *When* is read from what the problem says, what is still open on the
+    table and where the solution stands, and all of it can only be evidence
+    *for* its operation, never against it (see ``EvidenceLogLinear``). Signed
+    weights learned vetoes: in training "squares" always came first and never
+    in a question that said "even", so after "keep the even numbers" the
+    question's own "square" was outvoted by "even" and by "a step has already
+    been taken". Evidence-only, a familiar operation is still called for in a
+    combination, or at a point in a longer solution, that training never showed
+    it in. Only a prior, and having already been applied, can count against it."""
 
     kind = SYMBOLIC
     cost = 0.02
@@ -248,14 +259,15 @@ class OperatorExpert(Expert):
     def __init__(self, op: str, seed: int = 0):
         super().__init__(op, seed)
         self.op = op
-        self.fire = SparseLogLinear(lr=0.3)
+        self.fire = EvidenceLogLinear(lr=0.3, signed=("bias", "again"))
         self.bind = SparseLogLinear(lr=0.3)
 
     # -- features ----------------------------------------------------------
     @staticmethod
     def _fire_names(scene, ws) -> list:
-        """What every operator reads to decide whether it's the next move (the
-        same for all of them, so it's worked out once per state)."""
+        """What every operator reads to decide whether it's the next move: the
+        problem's words, where the solution stands and what is still open on
+        the table (the same for all of them, so it's worked out once per state)."""
         key = ("fire", ws.history)
         names = scene.cache.get(key)
         if names is None:
@@ -264,7 +276,10 @@ class OperatorExpert(Expert):
         return names
 
     def _fire_feats(self, scene, ws):
-        return dict.fromkeys(self._fire_names(scene, ws), 1.0)
+        f = dict.fromkeys(self._fire_names(scene, ws), 1.0)
+        if any(s.op == self.op for s in ws.steps):
+            f["again"] = 1.0
+        return f
 
     @staticmethod
     def _arg_names(scene, ws, i, fact) -> list:
@@ -399,7 +414,7 @@ class OperatorExpert(Expert):
         key = (id(self), "ready", ws.history)
         v = scene.cache.get(key)
         if v is None:
-            v = scene.cache[key] = sigmoid(sum(map(self.fire.w.get, self._fire_names(scene, ws), repeat(0.0))))
+            v = scene.cache[key] = sigmoid(self.fire.score(self._fire_feats(scene, ws)))
         return v
 
     def candidates(self, scene, ws, top: int = 1):

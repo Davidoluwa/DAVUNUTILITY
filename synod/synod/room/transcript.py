@@ -61,6 +61,9 @@ def render(task, res, alternatives: int = 2, reasons: bool = True, judge=None) -
                      f" ({routes} route{'s' if routes > 1 else ''} reached it){truth}   compute {res.cost:.1f}")
     if other:
         lines.append("     other answers considered: " + ", ".join(other))
+    if getattr(res, "derived", False):
+        lines.append("     (unsure at first, it searched for a derivation of what the question asks; every move is sound, "
+                     "so those steps are proved, and the probability is the judge's on how to finish)")
     if res.certified:
         lines.append("     (sure enough to teach the room from this solution)")
     return "\n".join(lines)

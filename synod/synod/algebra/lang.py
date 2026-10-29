@@ -457,6 +457,10 @@ def fmt(v) -> str:
     return fmt_num(v)
 
 
+class Unknowns(tuple):
+    """The variables a question asks about: what a derivation has to reach."""
+
+
 class Algebra(Domain):
     """Equations and systems of equations, solved by general moves."""
 
@@ -488,6 +492,20 @@ class Algebra(Domain):
 
     def context(self, reading) -> tuple:
         return (reading.slots, "asks:" + ("many" if len(set(reading.mentions.values())) > 1 else "one"))
+
+    def unknowns(self, reading):
+        """The variables the question asks about. Every move keeps the
+        equations true, so a derivation that reads their values off is a proof
+        of them, however it got there."""
+        asked = tuple(dict.fromkeys(reading.mentions.values()))
+        return Unknowns(asked) if asked else None
+
+    def reached(self, ws, goal) -> bool:
+        """Every variable the question asks about has been read off a solved equation."""
+        if not isinstance(goal, Unknowns):
+            return super().reached(ws, goal)
+        found = {ws.fact(s.args[0]).value.solved_for() for s in ws.steps if s.op == "value"}
+        return all(v in found for v in goal)
 
     def grounding(self, ws, step):
         """A number read off "V = 3" is about every mention of V in the question."""
@@ -545,7 +563,8 @@ class Algebra(Domain):
                         v = ws.run(st)
                         if v is None:
                             continue
-                        if self.matches(v, label):
+                        w2 = ws.apply(st, v)
+                        if self.reached(w2, label):
                             scene.cache["fallback_runs"] = runs
                             yield steps_to_program(list(ws.steps) + [st])
                             return
@@ -553,7 +572,7 @@ class Algebra(Domain):
                         if key in seen:
                             continue
                         seen.add(key)
-                        nxt.append(ws.apply(st, v))
+                        nxt.append(w2)
                         if runs > cap:
                             scene.cache["fallback_runs"] = runs
                             return

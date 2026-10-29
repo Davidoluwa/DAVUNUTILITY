@@ -137,6 +137,8 @@ class Result:
     surprise: float = 0.0  # -log P(worked solution) under the room before it learned it (nats)
     verified: bool = False  # the answer passed the problem's own check (verifiable domains)
     searched: bool = False  # it took a search, not just deliberation, to find it
+    derived: bool = False  # it searched for a derivation of the problem's unknowns, and finished from there
+    guessed: bool = False  # its first answer didn't come with a derivation of what was asked, so it wasn't delivered
     effort: int = 0  # the widest search it needed (0: deliberation was enough)
 
     @property
@@ -345,10 +347,13 @@ class Room:
         return softmax(scores if t == 1.0 else [z / t for z in scores])
 
     # -- deliberation ------------------------------------------------------
-    def deliberate(self, scene: Scene, width: int, bench: Bench):
-        routes = [Route(0.0, scene.workspace())]
+    def deliberate(self, scene: Scene, width: int, bench: Bench, start: Optional[Workspace] = None):
+        """Beam search over steps, from the problem as given (or from a state
+        already reached, e.g. a derivation of what the problem asks for)."""
+        routes = [Route(0.0, start or scene.workspace())]
         done, cost, moments = [], 0.0, {}
-        steps = self.steps_for(scene)
+        steps = self.steps_for(scene) - (len(start.steps) if start is not None else 0)
+        steps = max(steps, 1)
         for depth in range(steps + 1):
             nxt = []
             for r in routes:
@@ -404,7 +409,67 @@ class Room:
             if p >= res.threshold:
                 res.answer = v
         if res.answer is None and self.harder_for(scene) and getattr(self, "_top", 1) == 1:
-            return self._harder(scene, res, benches)
+            res = self._harder(scene, res, benches)
+        if scene.unknowns is not None and getattr(self, "_top", 1) == 1:
+            # An answer about the problem's unknowns that doesn't come with a derivation of them is a guess.
+            if res.answer is not None and not scene.domain.reached(res.route.ws, scene.unknowns):
+                res.answer, res.guessed = None, True
+            # Unsure (or guessing) when answering for real: derive. Not while practising: the derivations a
+            # search finds are sound but roundabout, and practising on them teaches roundabout habits.
+            if res.answer is None and not self.config.learn:
+                res = self._derive(scene, res, benches[-1])
+        return res
+
+    def _escalate(self, scene, goal, bench, res):
+        """Search for a route that reaches the goal, wider each time nothing
+        does, and as a last resort trusting the judge's preferences less."""
+        cfg = self.config
+        keep = (cfg.search_width, cfg.search_alternatives)
+        path = None
+        try:
+            for level, (width, alternatives, *temp) in enumerate(cfg.escalate):
+                cfg.search_width, cfg.search_alternatives = width, alternatives
+                self._temperature = temp[0] if temp else 1.0  # each failure: doubt the judge's preferences more
+                path = self.search(scene, goal, bench, fallback=level == 0)
+                res.cost += self.search_cost + 0.02 * scene.cache.pop("fallback_runs", 0)
+                res.effort = width
+                if path is not None:
+                    break
+        finally:
+            cfg.search_width, cfg.search_alternatives = keep
+            self._temperature = 1.0
+        res.searched = True
+        return path
+
+    def _derive(self, scene, res, bench) -> Result:
+        """Still unsure, on a problem whose unknowns are found by derivation:
+        search for a derivation that reaches them (every move is sound, so
+        what it derives is proved, however unfamiliar the route), then
+        deliberate from there as usual to finish (read the answer off, combine
+        two values, ask whether one is prime ...). The derivation is certain;
+        the probability is the judge's on how to finish."""
+        path = self._escalate(scene, scene.unknowns, bench, res)
+        if path is None:
+            return res
+        start = path[-1][0]
+        done, cost, moments = self.deliberate(scene, self.config.beam, bench, start=start)
+        res.cost += cost
+        res._moments.update(moments)
+        pooled: dict = {}
+        for r in done:
+            p, best, n = pooled.get(r.outcome, (0.0, None, 0))
+            pooled[r.outcome] = (p + math.exp(r.logp), r if best is None or r.logp > best.logp else best, n + 1)
+        if not pooled:
+            return res
+        prefix, c = self._route(scene, path[:-1], bench)
+        res.cost += c
+        ranked = sorted(pooled.items(), key=lambda kv: -kv[1][0])
+        v, (p, best, _) = ranked[0]
+        res.route = Route(best.logp, best.ws, prefix.trail + best.trail)
+        res.probability, res.derived = p, True
+        res.answers = [(x, q, n) for x, (q, _, n) in ranked] + [a for a in res.answers if a[0] not in pooled]
+        if p >= res.threshold:
+            res.answer = v
         return res
 
     def _harder(self, scene, res, benches) -> Result:
@@ -428,25 +493,10 @@ class Room:
         must pass): deliver the most probable route that passes; if none of the
         open routes does, search for one, guided by the room itself."""
         for v, (p, best, _) in ranked:
-            if scene.domain.matches(v, scene.target):
+            if scene.domain.reached(best.ws, scene.target):
                 res.route, res.probability, res.answer, res.verified = best, p, v, True
                 return res
-        cfg = self.config
-        keep = (cfg.search_width, cfg.search_alternatives)
-        path = None
-        try:  # think harder only while nothing passes: a wider search each time
-            for level, (width, alternatives, *temp) in enumerate(cfg.escalate):
-                cfg.search_width, cfg.search_alternatives = width, alternatives
-                self._temperature = temp[0] if temp else 1.0  # each failure: doubt the judge's preferences more
-                path = self.search(scene, scene.target, bench, fallback=level == 0)
-                res.cost += self.search_cost + 0.02 * scene.cache.pop("fallback_runs", 0)
-                res.effort = width
-                if path is not None:
-                    break
-        finally:
-            cfg.search_width, cfg.search_alternatives = keep
-            self._temperature = 1.0
-        res.searched = True
+        path = self._escalate(scene, scene.target, bench, res)  # think harder only while nothing passes
         if path is not None:
             route, cost = self._route(scene, path, bench)
             res.cost += cost
@@ -587,7 +637,7 @@ class Room:
                     if best is not None and lp2 <= best[0]:
                         continue
                     w2 = ws.apply(c.step, c.value)
-                    if scene.domain.matches(c.value, label):
+                    if scene.domain.reached(w2, label):
                         best = (lp2, w2)
                     else:
                         nxt.append((lp2, w2))
@@ -616,7 +666,7 @@ class Room:
                         break
                     ws = ws.apply(step, v)
                 else:
-                    if scene.domain.matches(ws.answer, label):
+                    if scene.domain.reached(ws, label):
                         found.append((len(ws.steps), len(found), ws))
             if not found:
                 return None
