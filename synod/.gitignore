@@ -6,3 +6,4 @@ results/council_trace.json
 results/room.pkl
 results/room_trace.json
 results/room_compare.pkl
+results/room_*.pkl
