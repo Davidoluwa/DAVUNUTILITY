@@ -44,6 +44,7 @@ class Task:
     features: tuple = ()
     solution: tuple = ()  # hidden reference method, for evaluation only (never in the view)
     answerable: bool = True  # False: the question doesn't give enough information (target is None)
+    checks: str = ""  # hidden checks, as a problem of the same kind (e.g. a program's unseen test inputs)
 
     def view(self, pressure: float = 0.0) -> TaskView:
         return TaskView(self.id, self.history, self.tolerance, pressure, self.question, self.context, self.features)

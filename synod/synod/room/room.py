@@ -72,6 +72,7 @@ class RoomConfig:
     search_width: int = 6
     search_alternatives: int = 3  # bindings per operator considered while searching
     speak_at: float = 0.01  # an operator with less than this share of the operators' readiness stays quiet
+    escalate: tuple = ((6, 3), (12, 3), (24, 4))  # verifiable problems: search wider while nothing passes the check
     stop_habits: bool = False  # the judge reading the step number and previous operation on "answer" (habits that break on longer problems)
     judge_lr: float = 0.3
     dropout: float = 0.3  # judge trains with random experts left out, so it learns what each is worth alone
@@ -133,6 +134,7 @@ class Result:
     surprise: float = 0.0  # -log P(worked solution) under the room before it learned it (nats)
     verified: bool = False  # the answer passed the problem's own check (verifiable domains)
     searched: bool = False  # it took a search, not just deliberation, to find it
+    effort: int = 0  # the widest search it needed (0: deliberation was enough)
 
     @property
     def steps(self) -> list:
@@ -387,7 +389,19 @@ class Room:
             if self.domain.matches(v, scene.target):
                 res.route, res.probability, res.answer, res.verified = best, p, v, True
                 return res
-        path = self.search(scene, scene.target, bench)
+        cfg = self.config
+        keep = (cfg.search_width, cfg.search_alternatives)
+        path = None
+        try:  # think harder only while nothing passes: a wider search each time
+            for level, (width, alternatives) in enumerate(cfg.escalate):
+                cfg.search_width, cfg.search_alternatives = width, alternatives
+                path = self.search(scene, scene.target, bench, fallback=level == 0)
+                res.cost += self.search_cost + 0.02 * scene.cache.pop("fallback_runs", 0)
+                res.effort = width
+                if path is not None:
+                    break
+        finally:
+            cfg.search_width, cfg.search_alternatives = keep
         res.searched = True
         if path is not None:
             route, cost = self._route(scene, path, bench)
@@ -497,7 +511,7 @@ class Room:
             self.stats["found"] += 1
         return found
 
-    def search(self, scene: Scene, label: float, bench: Bench):
+    def search(self, scene: Scene, label: float, bench: Bench, fallback: bool = True):
         """The route the room itself finds most likely among those that reach
         the revealed answer: a beam search scored by the judge's own step
         probabilities. A route only gets less likely as it grows, so once the
@@ -509,10 +523,12 @@ class Room:
         cfg = self.config
         best = None  # (log probability, workspace)
         routes = [(0.0, scene.workspace())]
+        self.search_cost = 0.0  # compute spent, so searching is never free
         for depth in range(cfg.max_steps):
             nxt = []
             for lp, ws in routes:
-                cands, _ = self.candidates(scene, ws, bench, search=True)
+                cands, c_cost = self.candidates(scene, ws, bench, search=True)
+                self.search_cost += c_cost
                 gates = self.gate(ws, cands)
                 for k, c in enumerate(cands):
                     if c.step.op in TERMINAL or c.value is UNKNOWABLE:  # an unknown can't lead to a number
@@ -528,7 +544,7 @@ class Room:
             nxt.sort(key=lambda t: -t[0])
             seen, routes = set(), []
             for lp, ws in nxt:
-                key = (tuple(sorted(ws.values)), frozenset(ws.used))
+                key = (tuple(sorted(ws.values, key=repr)), frozenset(ws.used))  # same results, same facts used
                 if key not in seen:
                     seen.add(key)
                     routes.append((lp, ws))
@@ -536,9 +552,13 @@ class Room:
                     break
             if not routes or (best is not None and best[0] >= routes[0][0]):
                 break
+        if best is None and not fallback:
+            return None
         if best is None:
             found = []
             for prog in self.domain.fallback(scene, label):
+                self.search_cost += 0.02 * scene.cache.get("fallback_runs", 0)
+                scene.cache["fallback_runs"] = 0
                 ws = scene.workspace()
                 for step in program_to_steps(prog):
                     v = ws.run(step)

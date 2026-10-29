@@ -39,7 +39,7 @@ def tree(steps) -> tuple:
 
 
 def _is_leaf(p) -> bool:
-    return p[0] in ("N", "L", "Q", "F", "C", "X", "K")
+    return p[0] in ("N", "L", "Q", "F", "C", "X", "I", "V", "E", "K")
 
 
 def _ops(p) -> int:
@@ -163,9 +163,10 @@ def make(body, sig) -> Procedure:
 def _kind_of(p):
     if p[0] in _LEAF_KIND:
         return _LEAF_KIND[p[0]]
-    if p[0] == "X":
-        return None  # expression or polynomial: either
-    return NUM
+    if _is_leaf(p):
+        return None  # a kind of fact only its domain knows (or X: expression or polynomial): accept
+    op = op_info(p[0])
+    return getattr(op, "out", NUM) if op is not None else NUM
 
 
 def _match(pat, p, binding, proc):
@@ -174,9 +175,9 @@ def _match(pat, p, binding, proc):
         if i in binding:
             return binding[i] == p
         k = _kind_of(p)
-        if k is None:
+        if k is None and p[0] == "X":
             k = (EXPR, POLY)
-        if not any(x in proc.sig[i] for x in (k if isinstance(k, tuple) else (k,))):
+        if k is not None and not any(x in proc.sig[i] for x in (k if isinstance(k, tuple) else (k,))):
             return False
         binding[i] = p
         return True

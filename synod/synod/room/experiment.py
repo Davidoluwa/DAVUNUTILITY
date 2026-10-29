@@ -70,10 +70,13 @@ def backers(res) -> list:
 
 
 def run_room(name: str = "room", seed: int = 0, scenario: RoomScenario | None = None, keep=None,
-             freeze_at_test: bool = True) -> RoomRun:
-    scenario = scenario or RoomScenario(seed=seed)
-    world = RoomWorld(scenario)
-    orch = STRATEGIES[name](seed)
+             freeze_at_test: bool = True, world=None, build=None) -> RoomRun:
+    """Practice on a world's training stream, then sit its test sets frozen.
+    Any domain: pass its world and a builder (seed -> room)."""
+    if world is None:
+        scenario = scenario or RoomScenario(seed=seed)
+        world = RoomWorld(scenario)
+    orch = (build or STRATEGIES[name])(seed)
     obj = Objective()
     out = RoomRun(name, orchestrator=orch)
     started = time.time()
@@ -95,7 +98,8 @@ def run_room(name: str = "room", seed: int = 0, scenario: RoomScenario | None = 
             method = res.route is not None and (canonical_program(steps_to_program(res.steps)) == task.solution
                                                 if task.answerable else res.insufficient)
             row = {"steps": len(res.steps) - 1 if res.route else 0, "backers": backers(res) if given is not None else [],
-                   "said_missing": res.insufficient, "ops": tuple(s.op for s in res.steps)}
+                   "said_missing": res.insufficient, "ops": tuple(s.op for s in res.steps),
+                   "searched": res.searched, "verified": res.verified, "effort": res.effort}
             cost = res.cost
         else:
             # the old council can only answer with a number; an incomplete

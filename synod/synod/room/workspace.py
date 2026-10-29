@@ -440,7 +440,7 @@ def _question_facts(r: Reading) -> dict:
 # ----------------------------------------------------------------------------
 # Programs (nested tuples, as in maths/programs.py) <-> steps
 # ----------------------------------------------------------------------------
-_LEAVES = ("N", "L", "Q", "F", "C", "X")
+_LEAVES = ("N", "L", "Q", "F", "C", "X", "I", "V", "E")  # fact refs (results S and constants K aside)
 
 
 def program_to_steps(prog) -> list:
