@@ -109,11 +109,11 @@ The last change that mattered: when even the widest search fails the examples, t
 |---|---|---|
 | arithmetic: familiar / ×100 / word problems | 97 / 100 / 60 | 95 / 98 / 54 |
 | arithmetic: new combinations / missing info | 20 / 61 | 33 / 78 |
-| code: familiar / wording / combinations / four steps | 99 / 97 / 94 / 24 | 99 / 95 / 100 / 43 (the orchestra ran before the last-resort doubt) |
+| code: familiar / wording / combinations / four steps | 99 / 97 / 94 / 24 | 99 / 95 / 100 / 43 |
 | algebra: familiar / new shapes | 100 / 100 | 100 / 100 |
 | algebra: new wording / moves never combined | 78 / **0** | 99 / **100** |
 
-It holds together and kept two invented procedures. Sharing has a cost, though: on algebra's unseen combinations the orchestra **derives the right answer and abstains**. The shared judge trusts the necessary first move (expanding the brackets) too little, so the route's probability stays under the answer bar. No modality specialisation emerged among the neural experts.
+It holds together and kept two invented procedures. Sharing has a cost, though. At depth it's weaker than the specialists (four-step code 24% vs 43%), on algebra's unseen combinations the orchestra **derives the right answer and abstains**. The shared judge trusts the necessary first move (expanding the brackets) too little, so the route's probability stays under the answer bar. No modality specialisation emerged among the neural experts.
 
 ## Honest summary
 

@@ -372,8 +372,8 @@ Results (3 seeds, same practice per domain as the specialists):
 | algebra: familiar, new shapes and letters | 100%, 100% | 100%, 100% |
 | algebra: new wording, moves never combined | **78%, 0%** | **99%, 100%** |
 
-- **It holds together.** One room matches or beats the specialists on familiar arithmetic, word problems and most of code, and it kept two invented procedures, `(a + b) ÷ c` and `(a × b) ÷ 100`. Its code numbers predate the last-resort doubt, so four-step programs (24%) compare against the specialists' older 20%.
-- **Sharing has a cost.** On algebra's unseen combinations the orchestra derives the right answer but abstains. The one necessary first move (expanding the brackets) is trusted too little by the shared judge, so the route's probability stays under the answer bar. That's a calibration failure, not a reasoning one.
+- **It holds together.** One room matches or beats the specialists on familiar arithmetic, word problems and code's 1–3 step tasks, and it kept two invented procedures, `(a + b) ÷ c` and `(a × b) ÷ 100`. At depth it's weaker than the specialist: four-step programs 24% vs 43%.
+- **Sharing has a cost.** On algebra's unseen combinations the orchestra derives the right answer but abstains. The one necessary first move (expanding the brackets) is trusted too little by the shared judge, so the route's probability stays under the answer bar. That's a calibration failure, not a reasoning one. A likely cause: 773 arithmetic practice questions with an equation in them are read as algebra, all solved by gathering first, which tilts the shared experts away from opening with an expansion.
 - **No specialisation emerged.** The neural experts didn't divide the modalities among themselves: each backs all three about evenly (≈1.5 of 1.58 bits).
 
 Full reports: `results/GENERAL_REPORT.md`, `results/ORCHESTRA_REPORT.md`. The design is in `docs/ARCHITECTURE.md` section 11.

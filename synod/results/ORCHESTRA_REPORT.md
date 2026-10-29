@@ -49,5 +49,5 @@ Where each neural expert's correct backing went (seed 0; entropy of 1.58 bits = 
 
 Procedures kept: `(a + b) ÷ c`, `(a × b) ÷ 100`.
 
-Wall-clock per run: 1066s.
+Wall-clock per run: 1090s.
 
