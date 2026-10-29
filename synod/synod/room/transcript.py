@@ -16,7 +16,7 @@ def render(task, res, alternatives: int = 2, reasons: bool = True, judge=None) -
     hidden = f"  (hidden type: {task.family})" if getattr(task, "family", "") else ""
     lines = [f"Q: {task.question}{hidden}"]
     if res.route is None:
-        lines.append("  nobody could make a first step  => abstains")
+        lines.append("  no route it tried reached an answer  => abstains")
         return "\n".join(lines)
     ws0 = res.route.trail[0][0].ws
     dom = getattr(ws0, "domain", ARITH)
