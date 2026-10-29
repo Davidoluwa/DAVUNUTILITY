@@ -85,9 +85,11 @@ Results after 2,000 practice questions (seed 0):
 
 | code | familiar | new wording | new combinations | four steps |
 |---|---|---|---|---|
-| the room | 99% | 94% | 99% | 20% (4–46%) |
-| operators alone | 100% | 95% | 96% | 42% |
+| the room | 99% | 95% | 100% | **43%** (34–48%) |
+| operators alone | 100% | 96% | 92% | 25% |
 | search with nothing learned | 91% | 92% | 81% | 0% |
+
+The last change that mattered: when even the widest search fails the examples, the room searches once more **trusting its own judge less** (doubt after failure). Four-step programs went from 20% (4–46% across seeds) to 43% (34–48%).
 
 | algebra | familiar | new wording | new shapes and letters | moves never combined | three equations |
 |---|---|---|---|---|---|
@@ -107,7 +109,7 @@ Results after 2,000 practice questions (seed 0):
 |---|---|---|
 | arithmetic: familiar / ×100 / word problems | 97 / 100 / 60 | 95 / 98 / 54 |
 | arithmetic: new combinations / missing info | 20 / 61 | 33 / 78 |
-| code: familiar / wording / combinations / four steps | 99 / 97 / 94 / 24 | 99 / 94 / 99 / 20 |
+| code: familiar / wording / combinations / four steps | 99 / 97 / 94 / 24 | 99 / 95 / 100 / 43 (the orchestra ran before the last-resort doubt) |
 | algebra: familiar / new shapes | 100 / 100 | 100 / 100 |
 | algebra: new wording / moves never combined | 78 / **0** | 99 / **100** |
 
@@ -123,7 +125,7 @@ It holds together and kept two invented procedures. Sharing has a cost, though: 
 - The room thinks harder by itself when its check fails.
 
 **What doesn't yet:**
-- **Depth.** Every modality breaks one step past its training (20%, 11%, ≤ 10%).
+- **Depth.** Every modality struggles one step past its training: code 43%, algebra 11%, arithmetic ≤ 10%.
 - **Specialisation.** The shared population didn't divide work across modalities.
 - **Calibration under sharing.** See algebra above.
 

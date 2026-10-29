@@ -339,8 +339,8 @@ Q: Given -6x - 4y = -42 and 5(5x - 2y) = 175, what is x plus y?
 
 | code | familiar | new wording | new combinations | four steps (training: ≤ 3) |
 |---|---|---|---|---|
-| **the room** | 99 | 94 | 99 | 20 (4–46 across seeds) |
-| operators alone | 100 | 95 | 96 | 42 |
+| **the room** | 99 | 95 | **100** | **43** (34–48 across seeds) |
+| operators alone | 100 | 96 | 92 | 25 |
 | search with nothing learned | 91 | 92 | 81 | **0** |
 
 | algebra | familiar | new wording | new equation shapes and letters | moves never combined | three equations (training: ≤ 2) |
@@ -350,8 +350,9 @@ Q: Given -6x - 4y = -42 and 5(5x - 2y) = 175, what is x plus y?
 | search with nothing learned | 0 | 0 | 0 | 0 | 0 |
 
 - **It generalises within its reach.** In both modalities it handles new wordings, new combinations, and (in algebra) equation shapes and variable letters it never saw, at or near 100%. The cooperation earns its keep in algebra: on systems needing moves never combined in training, the full room gets 100% and operators alone 0%.
-- **Depth is the frontier, in every modality.** Programs one step longer than training (20%) and three-equation systems (11%) are where it breaks. On four-step programs the operators alone do better than the full room on average (42% vs 20%), the same pattern-copying problem as in arithmetic. Seeds swing wildly there (4–46%).
-- **Learning is what makes search work at depth.** At the same search budget, the learned room solved up to 55% of four-step programs on its best seed; search with nothing learned solves 0% at every width tried, up to 48.
+- **Depth is the frontier, in every modality.** Programs one step longer than training reach 43%, and three-equation systems only 11%.
+- **What fixed most of the code depth problem: doubt after failure.** When even the widest search fails the examples, the room searches once more while trusting its own judge less (a softmax temperature of 3). That lifted four-step programs from 20% (4–46% across seeds) to 43% (34–48%), and put the full room clearly ahead of operators alone (25%).
+- **Learning is what makes search work at depth.** Search with nothing learned solves 0% of four-step programs at every width tried, up to 48.
 
 ### The orchestra: one room for every modality
 
@@ -367,11 +368,11 @@ Results (3 seeds, same practice per domain as the specialists):
 |---|---|---|
 | arithmetic: familiar, ×100, word problems | 97%, 100%, 60% | 95%, 98%, 54% |
 | arithmetic: new combinations, missing info | 20%, 61% | 33%, 78% |
-| code: familiar, new wording, combinations, four steps | 99%, 97%, 94%, 24% | 99%, 94%, 99%, 20% |
+| code: familiar, new wording, combinations, four steps | 99%, 97%, 94%, 24% | 99%, 95%, 100%, 43% |
 | algebra: familiar, new shapes and letters | 100%, 100% | 100%, 100% |
 | algebra: new wording, moves never combined | **78%, 0%** | **99%, 100%** |
 
-- **It holds together.** One room matches or beats the specialists on familiar arithmetic, word problems and all of code, and it kept two invented procedures, `(a + b) ÷ c` and `(a × b) ÷ 100`.
+- **It holds together.** One room matches or beats the specialists on familiar arithmetic, word problems and most of code, and it kept two invented procedures, `(a + b) ÷ c` and `(a × b) ÷ 100`. Its code numbers predate the last-resort doubt, so four-step programs (24%) compare against the specialists' older 20%.
 - **Sharing has a cost.** On algebra's unseen combinations the orchestra derives the right answer but abstains. The one necessary first move (expanding the brackets) is trusted too little by the shared judge, so the route's probability stays under the answer bar. That's a calibration failure, not a reasoning one.
 - **No specialisation emerged.** The neural experts didn't divide the modalities among themselves: each backs all three about evenly (≈1.5 of 1.58 bits).
 

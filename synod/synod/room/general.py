@@ -99,7 +99,8 @@ def write(table, seeds, path=os.path.join("results", "GENERAL_REPORT.md")):
             L.append("Write a list program from a description and three examples. No answers are ever revealed: the "
                      "examples are the only check, and the room delivers only a program that passes them. Graded on "
                      "four hidden inputs of other lengths and ranges. When nothing passes, the room searches, then "
-                     "searches twice as wide, and again (6, 12, 24 routes).\n")
+                     "searches twice as wide, and again (6, 12, 24 routes), and as a last resort once more trusting its own "
+                     "judge less (doubt after failure).\n")
         else:
             L.append("Solve equations and systems of equations by general moves (expand, gather terms, divide both "
                      "sides, isolate, substitute, eliminate, read off a value); no solve move. Half the practice "
