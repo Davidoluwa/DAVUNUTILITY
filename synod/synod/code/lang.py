@@ -272,9 +272,14 @@ def to_python(steps, reading=None) -> str:
     if reading is not None:
         for i, (v, _, _) in enumerate(reading.nums):
             consts[f"N{i + 1}"] = str(v)
+    steps = [s for s in steps if s.op not in (STOP, "insufficient")]
+    needed = {len(steps)}  # only the steps the answer depends on (no dead code)
+    for k in range(len(steps), 0, -1):
+        if k in needed:
+            needed |= {int(a[1:]) for a in steps[k - 1].args if a[0] == "S"}
     n = 0
-    for s in steps:
-        if s.op in (STOP, "insufficient"):
+    for k, s in enumerate(steps, 1):
+        if k not in needed:
             continue
         from ..room.workspace import PROCS
         if s.op in PROCS:
@@ -282,7 +287,7 @@ def to_python(steps, reading=None) -> str:
         else:
             body = PYTHON[s.op].format(*[names.get(a) or consts.get(a, a) for a in s.args])
         n += 1
-        names[f"S{n}"] = f"s{n}"
+        names[f"S{k}"] = f"s{n}"
         lines.append(f"    s{n} = {body}")
     lines.append(f"    return {python_name(n)}")
     return "\n".join(lines)

@@ -30,6 +30,9 @@ python -m synod --seeds 10                  # the sequence world -> results/REPO
 python -m synod.room train                  # the room (~5 min): 43 experts learn the dense curriculum
 python -m synod.room ask "Ann has 12 apples. She buys 3 bags with 5 apples in each, then gives away 4. How many apples does Ann have now?"
 python -m synod.room report --seeds 3       # room vs ablations and the council, exam (~25 min) -> results/ROOM_REPORT.md + room_viewer.html
+python -m synod.room train --domain code    # or algebra, or orchestra (one room for all three)
+python -m synod.room ask --domain code "Keep the 3 largest numbers, biggest first. Examples: [5, 1, 4, 9, 2] -> [9, 5, 4]; [3, 8, 1, 7] -> [8, 7, 3]"
+python -m synod.room ask --domain algebra "Given 2x + 3y = 13 and x - y = -1, what is x plus y?"
 python -m synod.room general --seeds 3      # the same room on code and algebra -> results/GENERAL_REPORT.md
 python -m synod.room orchestra --seeds 3    # one room for every modality -> results/ORCHESTRA_REPORT.md
 python -m unittest discover -s tests -t .   # 59 tests

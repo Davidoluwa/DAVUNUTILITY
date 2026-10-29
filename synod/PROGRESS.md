@@ -113,7 +113,7 @@ The last change that mattered: when even the widest search fails the examples, t
 | algebra: familiar / new shapes | 100 / 100 | 100 / 100 |
 | algebra: new wording / moves never combined | 78 / **0** | 99 / **100** |
 
-It holds together and kept two invented procedures. Sharing has a cost, though. At depth it's weaker than the specialists (four-step code 24% vs 43%), on algebra's unseen combinations the orchestra **derives the right answer and abstains**. The shared judge trusts the necessary first move (expanding the brackets) too little, so the route's probability stays under the answer bar. No modality specialisation emerged among the neural experts.
+It holds together and kept two invented procedures. Sharing has a cost, though. At depth it's weaker than the specialists (four-step code 24% vs 43%), and on algebra's unseen combinations the orchestra **derives the right answer and abstains**. The shared judge trusts the necessary first move (expanding the brackets) too little, so the route's probability stays under the answer bar. No modality specialisation emerged among the neural experts.
 
 ## Honest summary
 

@@ -1,7 +1,7 @@
 """The room: a large council that solves maths step by step.
 
-  python -m synod.room train [--seed S]          train the room (a few minutes), save it
-  python -m synod.room ask "Suppose 3*n - 4 = 11. What is n times 6?"
+  python -m synod.room train [--seed S] [--domain arith|code|algebra|orchestra]   train a room, save it
+  python -m synod.room ask [--domain D] "Suppose 3*n - 4 = 11. What is n times 6?"
   python -m synod.room chat                      ask questions interactively
   python -m synod.room report [--seeds N]        compare with the old council -> results/ROOM_REPORT.md
   python -m synod.room exam                      the 40-question exam, step by step
@@ -21,13 +21,34 @@ from ..protocol import Task
 from .transcript import render
 
 MODEL = os.path.join("results", "room.pkl")
+DOMAINS = ("arith", "code", "algebra", "orchestra")
 
 
-def train(seed: int = 0, verbose: bool = True):
+def model_path(domain: str = "arith") -> str:
+    return MODEL if domain == "arith" else os.path.join("results", f"room_{domain}.pkl")
+
+
+def _setup(domain: str, seed: int):
+    """(room, practice world) for a domain."""
+    from .room import RoomConfig, make_room
+    if domain == "code":
+        from ..code.lang import CODE
+        from ..code.world import CodeScenario, CodeWorld
+        return make_room(seed=seed, domain=CODE), CodeWorld(CodeScenario(seed=seed, n_per_test_split=0))
+    if domain == "algebra":
+        from ..algebra.lang import ALGEBRA
+        from ..algebra.world import AlgebraScenario, AlgebraWorld
+        return (make_room(seed=seed, domain=ALGEBRA, config=RoomConfig(max_steps=10)),
+                AlgebraWorld(AlgebraScenario(n_train=2000, seed=seed, n_per_test_split=0)))
+    if domain == "orchestra":
+        from .orchestra import OrchestraWorld, orchestra
+        return make_room(seed=seed, domain=orchestra()), OrchestraWorld(seed=seed, per=0)
     from .world import RoomScenario, RoomWorld
-    from .room import make_room
-    world = RoomWorld(RoomScenario(seed=seed, n_per_test_split=0))
-    room = make_room(seed=seed)
+    return make_room(seed=seed), RoomWorld(RoomScenario(seed=seed, n_per_test_split=0))
+
+
+def train(seed: int = 0, verbose: bool = True, domain: str = "arith"):
+    room, world = _setup(domain, seed)
     t0 = time.time()
     for k, task in enumerate(world.train_stream(), 1):
         room.handle(task)
@@ -37,27 +58,36 @@ def train(seed: int = 0, verbose: bool = True):
     return room
 
 
-def load():
-    if not os.path.exists(MODEL):
-        print("no trained room yet; training one (a few minutes)...", file=sys.stderr)
-        room = train(verbose=False)
-        save(room)
+def load(domain: str = "arith"):
+    path = model_path(domain)
+    if not os.path.exists(path):
+        print(f"no trained {domain} room yet; training one (a few minutes)...", file=sys.stderr)
+        room = train(verbose=False, domain=domain)
+        save(room, domain)
     else:
-        with open(MODEL, "rb") as fh:
+        from .orchestra import orchestra
+        orchestra()  # every domain registered before unpickling
+        with open(path, "rb") as fh:
             room = pickle.load(fh)
     room.config.learn = False
     return room
 
 
-def save(room):
-    os.makedirs(os.path.dirname(MODEL), exist_ok=True)
-    with open(MODEL, "wb") as fh:
+def save(room, domain: str = "arith"):
+    path = model_path(domain)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as fh:
         pickle.dump(room, fh)
 
 
 def ask(room, question: str) -> str:
     task = Task(10 ** 7, (), 1e-6, None, "", False, question=question, split="ask")
-    return render(task, room.handle(task), judge=room.judge)
+    res = room.handle(task)
+    out = render(task, res, judge=room.judge)
+    if res.route is not None and res.route.trail and res.route.trail[0][0].ws.domain.name == "code" and res.answer is not None:
+        from ..code.lang import to_python
+        out += "\n\n" + to_python(res.steps, res.route.trail[0][0].ws.reading)
+    return out
 
 
 def main(argv=None):
@@ -65,9 +95,12 @@ def main(argv=None):
     sub = ap.add_subparsers(dest="cmd", required=True)
     t = sub.add_parser("train")
     t.add_argument("--seed", type=int, default=0)
+    t.add_argument("--domain", choices=DOMAINS, default="arith")
     a = sub.add_parser("ask")
     a.add_argument("question", nargs="+")
-    sub.add_parser("chat")
+    a.add_argument("--domain", choices=DOMAINS, default="arith")
+    c = sub.add_parser("chat")
+    c.add_argument("--domain", choices=DOMAINS, default="arith")
     rp = sub.add_parser("report")
     rp.add_argument("--seeds", type=int, default=3)
     rp.add_argument("--reuse", action="store_true", help="reuse the last comparison runs (results/room_compare.pkl)")
@@ -82,13 +115,13 @@ def main(argv=None):
     args = ap.parse_args(argv)
 
     if args.cmd == "train":
-        room = train(args.seed)
-        save(room)
-        print(f"saved to {MODEL} ({len(room.experts)} experts)")
+        room = train(args.seed, domain=args.domain)
+        save(room, args.domain)
+        print(f"saved to {model_path(args.domain)} ({len(room.experts)} experts)")
     elif args.cmd == "ask":
-        print(ask(load(), " ".join(args.question)))
+        print(ask(load(args.domain), " ".join(args.question)))
     elif args.cmd == "chat":
-        room = load()
+        room = load(args.domain)
         print("Ask a maths question (empty line to quit).")
         while True:
             try:

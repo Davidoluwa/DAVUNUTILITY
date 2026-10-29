@@ -50,7 +50,10 @@ def render(task, res, alternatives: int = 2, reasons: bool = True, judge=None) -
     if known:
         v = dom.verdict(task, res)
         truth = f"  [truth {dom.truth(task)}{': correct' if v == 'right' else ': WRONG' if v == 'wrong' else ''}]"
-    if res.answer is None:
+    if res.answer is None and dom.verifiable:
+        lines.append(f"  => abstains: nothing it found passes the problem's own check (closest route shown){truth}"
+                     f"   compute {res.cost:.1f}")
+    elif res.answer is None:
         best = fmt(res.route.outcome)
         lines.append(f"  => abstains: best answer {best} only reached {res.probability:.2f} (needs {res.threshold:.2f}){truth}")
     else:
