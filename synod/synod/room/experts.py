@@ -37,10 +37,11 @@ import numpy as np
 
 from ..beliefs import Competence, conf_bucket
 from ..learner import SparseLogLinear, sigmoid, softmax
-from ..maths.mathlang import context, read
+from ..maths.mathlang import read
 from ..maths.nodes import _SparseMLP, numeric_features, squash
 from ..protocol import NEURAL, SYMBOLIC
-from .workspace import ANSWER, CANT, CONST, INSUFFICIENT, NUM, OPS, STOP, TERMINAL, UNKNOWABLE, Step, Workspace, canon
+from .workspace import (ANSWER, ARITH, ARITH_OPS, CANT, CONST, INSUFFICIENT, NUM, STOP, TERMINAL, UNKNOWABLE, Step,
+                        Workspace, canon)
 
 FEATURE_DIM = 4096
 
@@ -51,21 +52,23 @@ FEATURE_DIM = 4096
 class Scene:
     """The question as the room perceives it, computed once."""
 
-    def __init__(self, question: str):
+    def __init__(self, question: str, domain=None):
+        self.domain = domain or ARITH
         self.question = question
-        self.reading = read(question)
+        self.reading = self.domain.read(question)
         r = self.reading
         self.skeleton = r.skeleton
         self.words = tuple(sorted(set(r.skeleton)))
         self.wfeats = tuple(f"w:{t}" for t in self.words)
         self.bigrams = tuple(sorted({f"b:{a}_{b}" for a, b in zip(r.skeleton, r.skeleton[1:])}))
-        self.context = context(r)
+        self.context = self.domain.context(r)
         self.slots = r.slots
+        self.target = self.domain.target(r)  # what a verifiable problem's answer must be
         self._hash: dict = {}
         self.cache: dict = {}  # per-question scratch (e.g. an operator's best bindings in a state)
 
     def workspace(self) -> Workspace:
-        return Workspace(self.reading)
+        return Workspace(self.reading, domain=self.domain)
 
     def around(self, fact) -> list:
         """The words just before and after each place a fact is mentioned
@@ -468,7 +471,7 @@ class OperatorExpert(Expert):
 VIEWS = ("u", "b", "s", "c")
 
 
-OP_TOKENS = list(OPS) + [STOP, INSUFFICIENT]
+OP_TOKENS = list(ARITH_OPS) + [STOP, INSUFFICIENT]
 
 
 class NeuralExpert(Expert):
@@ -482,14 +485,15 @@ class NeuralExpert(Expert):
     kind = NEURAL
     cost = 0.2
 
-    def __init__(self, name: str, seed: int = 0):
+    def __init__(self, name: str, seed: int = 0, tokens=None):
         super().__init__(name, seed)
+        tokens = list(tokens) if tokens is not None else list(OP_TOKENS)
         rng = np.random.default_rng(seed * 7919 + 11)
         self.salt = int(rng.integers(1 << 30))
         extra = [v for v in VIEWS[1:] if rng.random() < 0.6]
         self.view = ("u",) + tuple(extra)
         self.hidden = int(rng.choice([32, 48, 64]))
-        self.tokens = list(OP_TOKENS)  # what it can say comes next (grows when the room invents an operation)
+        self.tokens = tokens  # what it can say comes next (grows when the room invents an operation)
         self.net = _SparseMLP(self.hidden, rng, n_out=len(self.tokens), lr=0.05)
         self.binders: dict = {}  # op -> that operation's expert (set by the bench)
 
@@ -992,20 +996,24 @@ class RelevanceExpert(Expert):
 
 
 def population(n_neural: int = 8, seed: int = 0, operators=None, memory=True, analogy=True, lexicon=True,
-               relevance=True) -> list:
-    """One bench of the room's members."""
-    ops = list(OPS) if operators is None else list(operators)
+               relevance=True, domain=None) -> list:
+    """One bench of the room's members: an operator expert per operation of the
+    domain, the neural pool, memory and analogy, the goal expert, the domain's
+    own reviewers, and the general reviewers."""
+    domain = domain or ARITH
+    ops = list(domain.ops) if operators is None else list(operators)
     experts = [OperatorExpert(op, seed + i) for i, op in enumerate(ops)]
     binders = {e.op: e for e in experts}
+    tokens = list(domain.ops) + [STOP] + ([INSUFFICIENT] if domain.missing_info else [])
     for k in range(n_neural):
-        n = NeuralExpert(f"neural-{k + 1}", seed * 101 + k)
+        n = NeuralExpert(f"neural-{k + 1}", seed * 101 + k, tokens=tokens)
         n.binders = binders
         experts.append(n)
     if memory:
         experts.append(MemoryExpert(seed=seed))
     if analogy:
         experts.append(AnalogyExpert(seed=seed))
-    experts += [GoalExpert(seed=seed), CheckerExpert(seed=seed), EstimatorExpert(seed=seed)]
+    experts += [GoalExpert(seed=seed)] + domain.reviewers(seed)
     if lexicon:
         experts.append(LexiconExpert(seed=seed))
     if relevance:

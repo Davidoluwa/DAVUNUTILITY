@@ -14,8 +14,7 @@ from collections import Counter
 from ..maths.trace import readable as _maths_readable
 from .experts import NeuralExpert, OperatorExpert
 from .exam import exam_tasks, train_curriculum_only
-from .room import verdict as _verdict
-from .workspace import STOP, UNKNOWABLE, fmt, say
+from .workspace import STOP, UNKNOWABLE
 from .world import RoomScenario, RoomWorld, SPLITS
 
 
@@ -83,7 +82,8 @@ def readable(feature: str) -> str:
 
 def case(room, task, res, source: str) -> dict:
     known = task.target is not None or not getattr(task, "answerable", True)
-    verdict = _verdict(task, res.answer) if known else None
+    dom = room.domain
+    verdict = room.grade(task, res) if known else None
     truth = task.target if getattr(task, "answerable", True) else UNKNOWABLE
     out = {"question": task.question, "source": source, "family": task.family or "", "answer": _f(truth),
            "verdict": verdict, "given": _f(res.answer), "probability": round(res.probability, 3),
@@ -93,7 +93,7 @@ def case(room, task, res, source: str) -> dict:
     if res.route is None:
         return out
     ws0 = res.route.trail[0][0].ws
-    out["facts"] = [{"ref": f.ref, "text": f.text or fmt(f.value)} for f in ws0.facts.values()]
+    out["facts"] = [{"ref": f.ref, "text": f.text or dom.fmt(f.value)} for f in ws0.facts.values()]
     for m, k in res.route.trail:
         order = sorted(range(len(m.cands)), key=lambda i: -m.gates[i + 1])
         shown = [k] + [i for i in order if i != k][:4]
@@ -101,7 +101,7 @@ def case(room, task, res, source: str) -> dict:
         for i in shown:
             c = m.cands[i]
             cands.append({
-                "token": c.token, "text": say(m.ws, c.step, c.value), "value": _f(c.value), "stop": c.step.op == STOP, "cant": c.step.op == "insufficient",
+                "token": c.token, "text": dom.say(m.ws, c.step, c.value), "value": _f(c.value), "stop": c.step.op == STOP, "cant": c.step.op == "insufficient",
                 "gate": round(m.gates[i + 1], 3), "chosen": i == k,
                 "backers": [{"name": p.expert, "kind": kind_of(room, p.expert), "confidence": round(p.confidence, 2),
                              "note": p.note} for p in sorted(c.props, key=lambda p: -p.confidence)],

@@ -11,6 +11,12 @@ Facts are referred to by position, not value ("the second number in the
 question", "the result of step 1"), so a step like ``sub(N2,S1)`` means the
 same thing in every question with that shape. That is what lets experts
 learn steps from one question and reuse them on another.
+
+Nothing in the workspace, the experts or the room is specific to arithmetic:
+a ``Domain`` says how to read a problem into facts, which operations exist
+(with their signatures and how to run them), which constants are always on
+the table, when two results match, and how to say a step. Arithmetic is one
+domain (``ARITH``, below); code and algebra are others.
 """
 from __future__ import annotations
 
@@ -61,6 +67,9 @@ class Op:
     name: str
     sig: tuple  # accepted fact kinds per argument position
     comm: bool = False
+    out: str = "num"  # the kind of fact its result is
+    run: object = None  # vals -> value or None (arithmetic operations run through ``execute``)
+    shows: object = None  # (input texts, result text) -> a line of a worked solution
 
 
 _N = (NUM,)
@@ -76,6 +85,17 @@ OPS = {o.name: o for o in [
     Op("at", ((FDEF, POLY), _N)), Op("slope", ((FDEF, POLY), _N)),
 ]}
 _EXTRA_UNARY = {"abs": _abs}
+ARITH_OPS = list(OPS)  # the arithmetic domain's operations, in a fixed order
+
+
+def register_ops(ops) -> list:
+    """Add a domain's operations to the table every workspace runs from (names
+    are unique across domains)."""
+    for o in ops:
+        if o.name in OPS and OPS[o.name] != o:
+            raise ValueError(f"operation {o.name} already defined differently")
+        OPS[o.name] = o
+    return [o.name for o in ops]
 
 
 @dataclass(frozen=True)
@@ -136,7 +156,13 @@ def run_op(name: str, vals):
     proc = PROCS.get(name)
     if proc is not None:
         v = proc.run(vals)
-        return v if v is None or abs(v) < BIG else None
+        return v if v is None or not isinstance(v, Fraction) or abs(v) < BIG else None
+    op = OPS.get(name)
+    if op is not None and op.run is not None:
+        try:
+            return op.run(vals)
+        except (ZeroDivisionError, OverflowError, ValueError, TypeError, IndexError, AttributeError, KeyError):
+            return None
     return execute(name, vals)
 
 
@@ -170,7 +196,7 @@ class Step:
 ANSWER = Step(STOP)
 CANT = Step(INSUFFICIENT)
 
-_ORDER = {"N": 0, "S": 1, "L": 2, "Q": 3, "F": 4, "C": 5, "X": 6, "K": 7}
+_ORDER = {"N": 0, "S": 1, "L": 2, "Q": 3, "F": 4, "C": 5, "X": 6, "K": 7, "I": 8, "V": 9, "E": 10}
 
 
 def ref_key(ref: str):
@@ -221,13 +247,15 @@ class Workspace:
     """Immutable-ish: ``apply`` returns a new workspace, so the room can keep
     several partial solutions alive at once (beam search)."""
 
-    __slots__ = ("reading", "facts", "steps", "values", "used", "where", "_memo")
+    __slots__ = ("reading", "facts", "steps", "values", "used", "where", "kinds", "domain", "_memo")
 
-    def __init__(self, reading: Reading, facts=None, steps=(), values=(), used=frozenset(), where=()):
+    def __init__(self, reading, facts=None, steps=(), values=(), used=frozenset(), where=(), domain=None, kinds=()):
+        self.domain = domain or ARITH
         self.reading = reading
-        self.facts = facts if facts is not None else _question_facts(reading)
+        self.facts = facts if facts is not None else self.domain.facts(reading)
         self.steps = tuple(steps)  # Step
-        self.values = tuple(values)  # Fraction per step
+        self.values = tuple(values)  # one result per step
+        self.kinds = tuple(kinds) or tuple(NUM for _ in self.values)  # the kind of each result
         self.used = used  # refs of question facts some step has used
         self.where = tuple(where)  # per step result: the places in the question it is about
         self._memo = {}  # a workspace never changes, so anything derived from it is computed once
@@ -248,9 +276,9 @@ class Workspace:
         if t is None:
             t = dict(self.facts)
             for i, v in enumerate(self.values):
-                t[f"S{i + 1}"] = Fact(f"S{i + 1}", NUM, v, where=self.where[i])
-            for k in CONSTANTS:
-                t[f"K{k}"] = Fact(f"K{k}", CONST, Fraction(k))
+                t[f"S{i + 1}"] = Fact(f"S{i + 1}", self.kinds[i], v, where=self.where[i])
+            for c in self.domain.constants:
+                t[c.ref] = c
             self._memo["table"] = t
         return t
 
@@ -262,7 +290,7 @@ class Workspace:
         m = self._memo.setdefault("size", {})
         if ref not in m:
             f = self.fact(ref)
-            known = f is not None and f.kind in (NUM, CONST) and f.value is not UNKNOWABLE
+            known = f is not None and f.kind in (NUM, CONST) and isinstance(f.value, (Fraction, int))
             m[ref] = abs(float(f.value)) if known else 0.0
         return m[ref]
 
@@ -271,10 +299,8 @@ class Workspace:
         out = self._memo.get(key)
         if out is None:
             out = [f for f in self.facts.values() if f.kind in kinds]
-            if NUM in kinds:
-                out += [self.table[f"S{i + 1}"] for i in range(len(self.values))]
-            if CONST in kinds:
-                out += [self.table[f"K{k}"] for k in CONSTANTS]
+            out += [self.table[f"S{i + 1}"] for i in range(len(self.values)) if self.kinds[i] in kinds]
+            out += [c for c in self.domain.constants if c.kind in kinds]
             self._memo[key] = out
         return out
 
@@ -294,7 +320,7 @@ class Workspace:
         return f"S{len(self.values)}" if self.values else None
 
     @property
-    def answer(self) -> Optional[Fraction]:
+    def answer(self):
         return self.values[-1] if self.values else None
 
     @property
@@ -305,7 +331,7 @@ class Workspace:
         return h
 
     # -- doing things ------------------------------------------------------
-    def run(self, step: Step) -> Optional[Fraction]:
+    def run(self, step: Step):
         memo = self._memo.get("run")
         if memo is None:
             memo = self._memo["run"] = {}
@@ -314,7 +340,7 @@ class Workspace:
             memo[key] = self._run(step)
         return memo[key]
 
-    def _run(self, step: Step) -> Optional[Fraction]:
+    def _run(self, step: Step):
         op = op_info(step.op)
         if op is None or len(step.args) != len(op.sig) or len(set(step.args)) != len(step.args):
             return None
@@ -326,25 +352,19 @@ class Workspace:
             vals.append(f.value)
         return run_op(step.op, vals)
 
-    def apply(self, step: Step, value: Fraction) -> "Workspace":
-        used = self.used | {a for a in step.args if a[0] in "NLQFCXS"}
+    def apply(self, step: Step, value) -> "Workspace":
+        used = self.used | {a for a in step.args if a[0] != "K"}
+        op = op_info(step.op)
+        kind = getattr(op, "out", NUM) if op is not None else NUM
         return Workspace(self.reading, self.facts, self.steps + (step,), self.values + (value,), used,
-                         self.where + (self._grounding(step),))
+                         self.where + (self._grounding(step),), self.domain, self.kinds + (kind,))
 
     def _grounding(self, step: Step) -> tuple:
-        """Where in the question a result is talked about. Solving an equation
-        gives the variable, so its result is about every mention of that
-        variable ("Is t a prime number?"); evaluating f(3) is about the call;
-        anything else is about the facts it was made from."""
-        sk = self.reading.skeleton
-        if step.op == "solve":
-            mentions = tuple(i for i, t in enumerate(sk) if t == "<var>")
-            if mentions:
-                return mentions
-        if step.op == "apply" and len(step.args) == 2:
-            c = self.fact(step.args[1])
-            if c is not None and c.where:
-                return c.where
+        """Where in the question a result is talked about: by default, the
+        places its inputs came from (a domain can say more)."""
+        special = self.domain.grounding(self, step)
+        if special:
+            return special
         out = []
         for a in step.args:
             f = self.fact(a)
@@ -577,3 +597,156 @@ def say(ws: Workspace, step: Step, value=None) -> str:
         body = f[0].text if f[0] is not None and f[0].text else "the expression"
         return (f"derivative of {body} at {x[1]} = {v}" if op == "slope" else f"{body} at {x[1]} = {v}")
     return f"{step.token} = {v}"
+
+
+# ----------------------------------------------------------------------------
+# Domains
+# ----------------------------------------------------------------------------
+_DOMAINS: dict = {}
+
+
+def _domain(name):
+    return _DOMAINS[name]
+
+
+class Domain:
+    """Everything the room needs to know about one kind of problem. The room,
+    its experts and its learning never look past this interface."""
+
+    name = "base"
+    ops: list = []  # the operations its operator experts stand for (registered in OPS)
+    constants: tuple = ()  # facts always on the table (e.g. K100)
+    missing_info = False  # whether "there isn't enough information" is an outcome here
+    verifiable = False  # whether a problem says how to check an answer (e.g. examples to pass)
+
+    def __init__(self):
+        _DOMAINS[self.name] = self
+
+    def __reduce__(self):  # one instance per domain, also after pickling
+        return (_domain, (self.name,))
+
+    # reading
+    def read(self, text):
+        raise NotImplementedError
+
+    def facts(self, reading) -> dict:
+        raise NotImplementedError
+
+    def context(self, reading) -> tuple:
+        return ()
+
+    def target(self, reading):
+        """What a verifiable problem's answer must be (e.g. the examples' outputs)."""
+        return None
+
+    # working
+    def grounding(self, ws, step):
+        return None
+
+    def matches(self, value, target) -> bool:
+        if value is UNKNOWABLE or target is UNKNOWABLE:
+            return value is target
+        return value is not None and value == target
+
+    def fallback(self, scene, label):
+        """Programs to try when the room's own search finds nothing (none by default)."""
+        return ()
+
+    def reviewers(self, seed: int) -> list:
+        """Domain-specific reviewing experts (on top of the general ones)."""
+        return []
+
+    # judging and saying
+    def verdict(self, task, res) -> str:
+        return verdict_value(task, res.answer)
+
+    def truth(self, task) -> str:
+        """The right answer, as shown next to the room's."""
+        return self.fmt(task.target if getattr(task, "answerable", True) else UNKNOWABLE)
+
+    def fmt(self, v) -> str:
+        return "?" if v is None else str(v)
+
+    def say(self, ws, step, value=None) -> str:
+        if step.op == STOP:
+            return f"the answer is {self.fmt(ws.answer)}"
+        if step.op == INSUFFICIENT:
+            return "the question doesn't give enough information to answer it"
+        op = OPS.get(step.op)
+        val = value if value is not None else ws.run(step)
+        args = [ws.fact(a) for a in step.args]
+        shown = [a.text or self.fmt(a.value) if a is not None else "?" for a in args]
+        if op is not None and op.shows is not None:
+            return op.shows(shown, self.fmt(val))
+        if step.op in PROCS:
+            return f"{step.op}({', '.join(shown)}) = {self.fmt(val)}  (invented: {PROCS[step.op].describe()})"
+        return f"{step.op}({', '.join(shown)}) = {self.fmt(val)}"
+
+
+def verdict_value(task, answer) -> str:
+    """right / wrong / abstain for a numeric answer. Saying "not enough
+    information" is right only when that's true; on an answerable question it
+    is a wrong claim."""
+    if answer is None:
+        return "abstain"
+    answerable = getattr(task, "answerable", True)
+    if answer is UNKNOWABLE:
+        return "wrong" if answerable else "right"
+    return "right" if answerable and task.is_correct(float(answer)) else "wrong"
+
+
+class Arithmetic(Domain):
+    """Maths questions in words and notation (the curriculum in world.py)."""
+
+    name = "arith"
+    ops = ARITH_OPS
+    constants = tuple(Fact(f"K{k}", CONST, Fraction(k)) for k in CONSTANTS)
+    missing_info = True
+
+    def read(self, text):
+        from ..maths.mathlang import read
+        return read(text)
+
+    def facts(self, reading) -> dict:
+        return _question_facts(reading)
+
+    def context(self, reading) -> tuple:
+        from ..maths.mathlang import context
+        return context(reading)
+
+    def grounding(self, ws, step):
+        """Solving an equation gives the variable, so its result is about every
+        mention of that variable ("Is t a prime number?"); evaluating f(3) is
+        about the call."""
+        sk = ws.reading.skeleton
+        if step.op == "solve":
+            mentions = tuple(i for i, t in enumerate(sk) if t == "<var>")
+            if mentions:
+                return mentions
+        if step.op == "apply" and len(step.args) == 2:
+            c = ws.fact(step.args[1])
+            if c is not None and c.where:
+                return c.where
+        return None
+
+    def matches(self, v, target) -> bool:
+        if v is UNKNOWABLE or target is UNKNOWABLE:
+            return v is target
+        return v is not None and abs(float(v) - float(target)) <= 1e-6 * max(1.0, abs(float(target)))
+
+    def fallback(self, scene, label):
+        from ..maths.programs import explain
+        return explain(scene.reading, float(label), limit=5)
+
+    def reviewers(self, seed: int) -> list:
+        from .experts import CheckerExpert, EstimatorExpert
+        return [CheckerExpert(seed=seed), EstimatorExpert(seed=seed)]
+
+    def fmt(self, v) -> str:
+        return fmt(v)
+
+    def say(self, ws, step, value=None) -> str:
+        return say(ws, step, value)
+
+
+ARITH = Arithmetic()

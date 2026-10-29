@@ -53,13 +53,12 @@ from typing import Optional
 import numpy as np
 
 from ..learner import SparseLogLinear, softmax
-from ..maths.programs import explain
 from ..objective import Objective
 from ..protocol import NEURAL
 from .experts import NeuralExpert, OperatorExpert, Scene
 from .procedures import Library, replay_path, retell, rewrite, tree, uses
-from .workspace import (ANSWER, CANT, INSUFFICIENT, STOP, TERMINAL, UNKNOWABLE, Step, Workspace, canon,
-                        program_to_steps, register)
+from .workspace import (ANSWER, ARITH, CANT, INSUFFICIENT, STOP, TERMINAL, UNKNOWABLE, Step, Workspace, canon,
+                        program_to_steps, register, verdict_value)
 
 
 @dataclass
@@ -132,6 +131,8 @@ class Result:
     certified: bool = False
     threshold: float = 0.5
     surprise: float = 0.0  # -log P(worked solution) under the room before it learned it (nats)
+    verified: bool = False  # the answer passed the problem's own check (verifiable domains)
+    searched: bool = False  # it took a search, not just deliberation, to find it
 
     @property
     def steps(self) -> list:
@@ -142,21 +143,7 @@ class Result:
         return self.answer is UNKNOWABLE
 
 
-def _matches(v, target) -> bool:
-    if v is UNKNOWABLE or target is UNKNOWABLE:
-        return v is target
-    return v is not None and abs(float(v) - float(target)) <= 1e-6 * max(1.0, abs(float(target)))
-
-
-def verdict(task, answer) -> str:
-    """right / wrong / abstain. Saying "not enough information" is right only
-    when that's true; on an answerable question it is a wrong claim."""
-    if answer is None:
-        return "abstain"
-    answerable = getattr(task, "answerable", True)
-    if answer is UNKNOWABLE:
-        return "wrong" if answerable else "right"
-    return "right" if answerable and task.is_correct(float(answer)) else "wrong"
+verdict = verdict_value  # right / wrong / abstain for a numeric answer (each domain has its own, see Room.grade)
 
 
 def _key(step) -> str:
@@ -195,7 +182,9 @@ class Bench:
 
 
 class Room:
-    def __init__(self, benches, objective: Objective | None = None, config: RoomConfig | None = None, seed=0):
+    def __init__(self, benches, objective: Objective | None = None, config: RoomConfig | None = None, seed=0,
+                 domain=None):
+        self.domain = domain or ARITH
         self.benches = list(benches)
         self.experts = [e for b in self.benches for e in b.experts]
         self.objective = objective or Objective()
@@ -270,7 +259,7 @@ class Room:
                 c.props.append(p)
         if not allow_steps and ws.steps and STOP not in pool:
             pool[STOP] = Candidate(ANSWER, ws.answer)
-        if INSUFFICIENT not in pool:  # always an option, backed or not
+        if self.domain.missing_info and INSUFFICIENT not in pool:  # always an option, backed or not
             pool[INSUFFICIENT] = Candidate(CANT, UNKNOWABLE)
         cands = sorted(pool.values(), key=lambda c: c.token)
         for c in cands:
@@ -381,12 +370,57 @@ class Room:
                 pooled[v] = (p + math.exp(r.logp) / len(benches), r if best is None or r.logp > best.logp else best, n + 1)
         ranked = sorted(pooled.items(), key=lambda kv: -kv[1][0])
         res.answers = [(v, p, n) for v, (p, _, n) in ranked]
+        if self.domain.verifiable and scene.target is not None:
+            return self._verified(scene, res, ranked, benches[-1])
         if ranked:
             v, (p, best, _) = ranked[0]
             res.route, res.probability = best, p
             if p >= res.threshold:
                 res.answer = v
         return res
+
+    def _verified(self, scene, res, ranked, bench) -> Result:
+        """A problem that says how to check its answer (e.g. examples a program
+        must pass): deliver the most probable route that passes; if none of the
+        open routes does, search for one, guided by the room itself."""
+        for v, (p, best, _) in ranked:
+            if self.domain.matches(v, scene.target):
+                res.route, res.probability, res.answer, res.verified = best, p, v, True
+                return res
+        path = self.search(scene, scene.target, bench)
+        res.searched = True
+        if path is not None:
+            route, cost = self._route(scene, path, bench)
+            res.cost += cost
+            res.route, res.probability, res.answer, res.verified = route, math.exp(route.logp), route.ws.answer, True
+            res.answers = [(res.answer, res.probability, 1)] + res.answers
+        elif ranked:
+            res.route, res.probability = ranked[0][1][1], ranked[0][1][0]
+        return res
+
+    def _route(self, scene, path, bench):
+        """A worked path as a route with its deliberation (what was on the table
+        at each step, and how the judge weighed it)."""
+        trail, logp, cost = [], 0.0, 0.0
+        for ws, step in path:
+            allow = step.op not in TERMINAL or len(ws.steps) < self.config.max_steps
+            cands, c = self.candidates(scene, ws, bench, allow_steps=allow)
+            cost += c
+            key = _key(step)
+            k = next((i for i, x in enumerate(cands) if x.token == key), None)
+            if k is None:  # found by the fallback search: nobody proposed it
+                x = Candidate(step if step.op in TERMINAL else canon(step), ws.answer if step.op == STOP else ws.run(step))
+                x.feats = self.features(scene, ws, x)
+                cands = cands + [x]
+                k = len(cands) - 1
+            gates = self.gate(ws, cands)
+            trail.append((Moment(ws, cands, gates), k))
+            logp += math.log(max(gates[k + 1], 1e-9))
+        return Route(logp, path[-1][0], trail), cost
+
+    def grade(self, task, res) -> str:
+        """right / wrong / abstain, as the domain judges it."""
+        return self.domain.verdict(task, res)
 
     # -- one question, end to end -----------------------------------------
     def handle(self, task, width: Optional[int] = None) -> Result:
@@ -397,7 +431,7 @@ class Room:
         return res
 
     def _handle(self, task, width: Optional[int] = None) -> Result:
-        scene = Scene(task.question)
+        scene = Scene(task.question, self.domain)
         training = self.config.learn and task.split == "train"
         outsider = self.outsider(scene)
         if training and task.labeled and len(self.benches) > 1 and self.rng.random() < 0.5:
@@ -413,7 +447,15 @@ class Room:
             res._bench = self.full
         if not self.config.learn:
             return res
-        if task.labeled:
+        if self.domain.verifiable and scene.target is not None:  # the problem checks itself
+            res.label = scene.target
+            path = self._retell(scene, res.route and self._path(res.route) if res.verified else None)
+            if path is not None:
+                res.reference = path
+                self.teach(scene, path, "label", res)
+                if self.inventor is not None:
+                    self.inventor.library.record(scene, path)
+        elif task.labeled:
             res.label = task.target if getattr(task, "answerable", True) else UNKNOWABLE
             path = self._retell(scene, self.reference(scene, res.label, res, res._bench))
             if path is not None:
@@ -443,7 +485,7 @@ class Room:
 
     # -- finding a worked solution for a revealed answer -------------------
     def reference(self, scene: Scene, label, res: Result, bench: Bench):
-        if res.route is not None and _matches(res.route.outcome, label):
+        if res.route is not None and self.domain.matches(res.route.outcome, label):
             self.stats["own_solution"] += 1
             return self._path(res.route)
         if label is UNKNOWABLE:  # the move it needed: say so at the start
@@ -479,7 +521,7 @@ class Room:
                     if best is not None and lp2 <= best[0]:
                         continue
                     w2 = ws.apply(c.step, c.value)
-                    if _matches(c.value, label):
+                    if self.domain.matches(c.value, label):
                         best = (lp2, w2)
                     else:
                         nxt.append((lp2, w2))
@@ -496,7 +538,7 @@ class Room:
                 break
         if best is None:
             found = []
-            for prog in explain(scene.reading, float(label), limit=5):
+            for prog in self.domain.fallback(scene, label):
                 ws = scene.workspace()
                 for step in program_to_steps(prog):
                     v = ws.run(step)
@@ -504,7 +546,7 @@ class Room:
                         break
                     ws = ws.apply(step, v)
                 else:
-                    if _matches(ws.answer, label):
+                    if self.domain.matches(ws.answer, label):
                         found.append((len(ws.steps), len(found), ws))
             if not found:
                 return None
@@ -592,7 +634,7 @@ class Room:
         learn from them as if they had just been found: judge, experts,
         self-models and reviewers alike."""
         for question, _, tokens in solutions:
-            scene = Scene(question)
+            scene = Scene(question, self.domain)
             path = replay_path(scene, tokens, self.procedures)
             if path is None:
                 continue
@@ -667,7 +709,7 @@ class Inventor:
             t.cost = (t.cost[0] + res.cost, t.cost[1] + other.cost)
             if task.labeled:
                 t.surprise = (t.surprise[0] + res.surprise, t.surprise[1] + other.surprise)
-                a, b = verdict(task, res.answer) == "right", verdict(task, other.answer) == "right"
+                a, b = room.grade(task, res) == "right", room.grade(task, other) == "right"
                 name = t.proc.name
                 mine = res.reference and uses(_contracted([s.token for _, s in res.reference], t.proc), t.proc)
                 theirs = any(s.op == name for _, s in (other.reference or ())) or any(s.op == name for s in other.steps)
@@ -742,7 +784,7 @@ def _contracted(tokens, proc):
 
 
 def make_room(n_neural: int = 8, seed: int = 0, crossfit: bool = False, config: RoomConfig | None = None,
-              invent: bool = True, **kw) -> Room:
+              invent: bool = True, domain=None, **kw) -> Room:
     """A room with one bench of experts, or, cross-fitted, two sparring benches
     plus the full bench that answers. Experts in the same role share one
     self-model, learned from what they did on wordings new to them."""
@@ -750,7 +792,7 @@ def make_room(n_neural: int = 8, seed: int = 0, crossfit: bool = False, config: 
     names = ["sparring-a", "sparring-b", "full"] if crossfit else ["full"]
     benches = []
     for b, name in enumerate(names):
-        experts = population(n_neural, seed=seed * 7 + b, **kw)
+        experts = population(n_neural, seed=seed * 7 + b, domain=domain, **kw)
         benches.append(Bench(experts, name=name))
     for e in benches[-1].experts:  # one self-model per role
         for other in benches[:-1]:
@@ -758,4 +800,4 @@ def make_room(n_neural: int = 8, seed: int = 0, crossfit: bool = False, config: 
                 other.by_name[e.name].competence = e.competence
     config = config or RoomConfig()
     config.invent = invent and config.invent
-    return Room(benches, config=config, seed=seed)
+    return Room(benches, config=config, seed=seed, domain=domain)

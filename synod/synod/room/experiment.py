@@ -103,7 +103,7 @@ def run_room(name: str = "room", seed: int = 0, scenario: RoomScenario | None = 
             rec = orch.handle(task if task.answerable else replace(task, labeled=False))
             given = rec.final.value if rec.final is not None else None
             method, row, cost = False, {"steps": 0, "backers": []}, rec.cost
-        ok = verdict(task, given) == "right"
+        ok = (orch.grade(task, res) if isinstance(orch, Room) else verdict(task, given)) == "right"
         row.update({"split": task.split, "family": task.family, "delivered": given is not None, "correct": bool(ok),
                     "method": bool(method and ok), "cost": cost, "utility": obj.score(given is not None, bool(ok), cost),
                     "depth": len(task.solution and _ops(task.solution))})

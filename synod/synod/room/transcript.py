@@ -1,7 +1,7 @@
 """Render the room's work as a worked solution with its deliberation."""
 from __future__ import annotations
 
-from .workspace import INSUFFICIENT, STOP, UNKNOWABLE, fmt, say
+from .workspace import ARITH, INSUFFICIENT, STOP
 
 
 def _who(c, top=4) -> str:
@@ -19,13 +19,15 @@ def render(task, res, alternatives: int = 2, reasons: bool = True, judge=None) -
         lines.append("  nobody could make a first step  => abstains")
         return "\n".join(lines)
     ws0 = res.route.trail[0][0].ws
+    dom = getattr(ws0, "domain", ARITH)
+    fmt = dom.fmt
     facts = ", ".join(f"{f.ref} = {f.text or fmt(f.value)}" for f in ws0.facts.values())
     lines.append(f"  on the table: {facts or '(nothing it can read)'}")
     for n, (m, k) in enumerate(res.route.trail, 1):
         c = m.cands[k]
         g = m.gates[k + 1]
         label = "Done" if c.step.op == STOP else "Stop" if c.step.op == INSUFFICIENT else f"Step {n}"
-        what = say(m.ws, c.step, c.value)
+        what = dom.say(m.ws, c.step, c.value)
         lines.append(f"  {label}: {what}")
         lines.append(f"      {c.token}   judge {g:.2f}   backed by {_who(c)}")
         if c.reviews:
@@ -46,10 +48,8 @@ def render(task, res, alternatives: int = 2, reasons: bool = True, judge=None) -
     known = getattr(task, "target", None) is not None or not answerable
     truth = ""
     if known:
-        from .room import verdict
-        v = verdict(task, res.answer)
-        truth = f"  [truth {fmt(task.target if answerable else UNKNOWABLE)}" \
-                f"{': correct' if v == 'right' else ': WRONG' if v == 'wrong' else ''}]"
+        v = dom.verdict(task, res)
+        truth = f"  [truth {dom.truth(task)}{': correct' if v == 'right' else ': WRONG' if v == 'wrong' else ''}]"
     if res.answer is None:
         best = fmt(res.route.outcome)
         lines.append(f"  => abstains: best answer {best} only reached {res.probability:.2f} (needs {res.threshold:.2f}){truth}")
