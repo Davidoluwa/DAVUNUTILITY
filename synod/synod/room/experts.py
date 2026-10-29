@@ -128,6 +128,7 @@ def open_context(scene: "Scene", ws: Workspace, window: int = 3) -> list:
         if f is None:
             continue
         out.add(f"o:{ref[0]}")
+        out.update(f"oD:{t}" for t in scene.domain.describe(ws, f))
         for left, left2, right in scene.around(f):
             out.update((f"oL:{left}", f"oLL:{left2}_{left}", f"oR:{right}"))
         for p in f.where:
@@ -290,6 +291,7 @@ class OperatorExpert(Expert):
             # what the question says around it, not which number it happens to be
             for left, left2, right in scene.around(fact):
                 out += [f"{i}|L:{left}", f"{i}|LL:{left2}_{left}", f"{i}|R:{right}"]
+        out += [f"{i}|d:{t}" for t in scene.domain.describe(ws, fact)]  # what it looks like
         return out
 
     @staticmethod

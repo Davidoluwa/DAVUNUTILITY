@@ -618,6 +618,8 @@ class Domain:
     constants: tuple = ()  # facts always on the table (e.g. K100)
     missing_info = False  # whether "there isn't enough information" is an outcome here
     verifiable = False  # whether a problem says how to check an answer (e.g. examples to pass)
+    answer_kinds = None  # the kinds of fact an answer can be (None: any)
+    describes = False  # whether describe() says anything (the judge then reads it too)
 
     def __init__(self):
         _DOMAINS[self.name] = self
@@ -642,6 +644,11 @@ class Domain:
     # working
     def grounding(self, ws, step):
         return None
+
+    def describe(self, ws, fact) -> tuple:
+        """What a fact looks like at a glance, for the experts to read (e.g. an
+        equation is raw, gathered, solved). Nothing, by default."""
+        return ()
 
     def matches(self, value, target) -> bool:
         if value is UNKNOWABLE or target is UNKNOWABLE:

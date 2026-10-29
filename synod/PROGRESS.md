@@ -44,8 +44,41 @@ Results after 3,000 practice tasks (seed 0; no answers ever revealed, the exampl
 - **By the end of practice it solves every training task by deliberation alone**, with no search.
 - **Where it still fails:** on new four-step combinations it trusts the familiar three-step frame. For "the 2 largest *different* numbers" it skips "remove duplicates", although the word reviewer flags "different" as unexplained. Searching wider rescues about half of these.
 
-## 3. Algebra (in progress): full derivations
+## 3. Algebra (done): full derivations from the problem
 
-Equations and systems of equations, solved through general algebraic moves (expand, gather terms, divide both sides, isolate, substitute, eliminate), never a "solve" button. Every line of the derivation is shown.
+```text
+Q: Given -6x - 4y = -42 and 5(5x - 2y) = 175, what is x plus y?
+  Step 1: expand 5(5x - 2y) = 175:   25x - 10y = 175
+  Step 2: eliminate y from -6x - 4y = -42 and 25x - 10y = 175:   160x = 1120
+  Step 3: divide both sides of 160x = 1120:   x = 7
+  Step 4: so the value is 7
+  Step 5: eliminate x from -6x - 4y = -42 and 25x - 10y = 175:   -160y = 0
+  Step 6: divide both sides of -160y = 0:   y = 0
+  Step 7: so the value is 0
+  Step 8: 7 + 0 = 7          => 7   [correct]
+```
+
+That derivation comes from a test set of systems that need multiplying out first. That **combination** of moves never appeared in training.
+
+**What the domain supplies:**
+- an exact linear-algebra core;
+- a parser for equations as written;
+- seven general moves: expand, gather terms, divide both sides, isolate, substitute, eliminate, read off a value;
+- a glance at each equation's shape (raw, gathered, isolated, solved, whether it's about what the question asks).
+
+There is **no solve move**. Which moves to make, in what order, on what, is learned, from answers alone (half of the practice questions reveal the number, never the derivation).
+
+Results after 2,000 practice questions (seed 0):
+
+| test set | right |
+|---|---|
+| familiar kinds of question | 100% |
+| questions worded in new ways | 100% |
+| **equation shapes never seen** (brackets on both sides, two brackets on one side), **with variable letters never seen** (m, n, p, …) | 100% |
+| **systems that need multiplying out first** (moves seen, never together) | 100% |
+| **three equations in three unknowns** (training had at most two) | 7% (10% wrong, the rest abstained) |
+
+- **The frontier is three-equation systems.** The room has never seen a three-variable equation, so "eliminate removes one variable" was never observable to it. Without a handwritten strategy it derives true facts (e.g. z = 3), but rarely the asked one. Thinking harder (a wider beam, more options per operator) moved this from 0% to 7%.
+- **Invention found the 2×2 lemma by itself:** `value(divide(eliminate(a, b, c)))`, i.e. eliminate, divide, read off. It was tried and dropped, because the copy never needed it on the trial's questions.
 
 ## 4. Evaluation across all three, docs (to do)

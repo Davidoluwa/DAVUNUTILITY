@@ -73,6 +73,7 @@ class RoomConfig:
     search_alternatives: int = 3  # bindings per operator considered while searching
     speak_at: float = 0.01  # an operator with less than this share of the operators' readiness stays quiet
     escalate: tuple = ((6, 3), (12, 3), (24, 4))  # verifiable problems: search wider while nothing passes the check
+    think_harder: tuple = ()  # (beam, bindings per operator) to retry with, wider each time, while the room would abstain
     stop_habits: bool = False  # the judge reading the step number and previous operation on "answer" (habits that break on longer problems)
     judge_lr: float = 0.3
     dropout: float = 0.3  # judge trains with random experts left out, so it learns what each is worth alone
@@ -228,6 +229,7 @@ class Room:
 
     def candidates(self, scene: Scene, ws: Workspace, bench: Bench, search: bool = False, allow_steps: bool = True):
         pool: dict = {}
+        kinds = self.domain.answer_kinds
         fam = self.familiar(scene, bench)
         cost = 0.0
         spoken = []
@@ -238,11 +240,12 @@ class Room:
         # call on it to bind); while searching for a worked solution, everyone speaks.
         ready = {e.name: e.readiness(scene, ws) if ws.bindings(e.op) else 0.0 for e in bench.operators}
         total = sum(ready.values())
-        quiet = 0.0 if search else self.config.speak_at * total
+        top = getattr(self, "_top", 1)
+        quiet = 0.0 if search or top > 1 else self.config.speak_at * total
         for e in bench.steppers:
             if isinstance(e, OperatorExpert):
                 props = [] if not allow_steps or ready[e.name] < quiet else \
-                    e.propose(scene, ws, self.config.search_alternatives if search else 1)
+                    e.propose(scene, ws, self.config.search_alternatives if search else top)
             else:
                 props = e.propose(scene, ws)
             cost += e.cost
@@ -254,12 +257,14 @@ class Room:
             for p in props:
                 if p.step.op not in TERMINAL and not allow_steps:
                     continue
+                if p.step.op == STOP and kinds is not None and (not ws.kinds or ws.kinds[-1] not in kinds):
+                    continue  # not the kind of thing the question asks for
                 key = _key(p.step)
                 c = pool.get(key)
                 if c is None:
                     c = pool[key] = Candidate(p.step if p.step.op in TERMINAL else canon(p.step), p.value)
                 c.props.append(p)
-        if not allow_steps and ws.steps and STOP not in pool:
+        if not allow_steps and ws.steps and STOP not in pool and (kinds is None or ws.kinds[-1] in kinds):
             pool[STOP] = Candidate(ANSWER, ws.answer)
         if self.domain.missing_info and INSUFFICIENT not in pool:  # always an option, backed or not
             pool[INSUFFICIENT] = Candidate(CANT, UNKNOWABLE)
@@ -292,6 +297,14 @@ class Room:
             left = len([r for r in open_now if r not in c.step.args])
             f.update({"step": 1.0, f"fresh|{fresh}/{len(c.step.args)}": 1.0, f"left|{min(left, 3)}": 1.0,
                       f"uses-last|{int(ws.last in c.step.args) if ws.last else 'none'}": 1.0})
+        if self.domain.describes:  # what the result would look like (the domain's perception)
+            if c.step.op == STOP and ws.steps:
+                f.update({f"stop|last:{t}": 1.0 for t in self.domain.describe(ws, ws.fact(ws.last))})
+            elif c.step.op not in TERMINAL and c.value is not None:
+                w2 = ws.apply(c.step, c.value)
+                f.update({f"res:{t}": 1.0 for t in self.domain.describe(w2, w2.fact(w2.last))})
+                if c.value in ws.values or any(x.value == c.value for x in ws.facts.values()):
+                    f["res:already-known"] = 1.0
         n = len(c.props)
         neural = sum(p.kind == NEURAL for p in c.props)
         f[f"n|{min(n, 6)}"] = 1.0
@@ -379,6 +392,24 @@ class Room:
             res.route, res.probability = best, p
             if p >= res.threshold:
                 res.answer = v
+        if res.answer is None and self.config.think_harder and getattr(self, "_top", 1) == 1:
+            return self._harder(scene, res, benches)
+        return res
+
+    def _harder(self, scene, res, benches) -> Result:
+        """Unsure: deliberate again with a wider beam and more ways for each
+        operator to apply itself, wider each time, until an answer is clear."""
+        for beam, top in self.config.think_harder:
+            self._top = top
+            try:
+                again = self.answer(scene, beam, benches)
+            finally:
+                self._top = 1
+            again.cost += res.cost
+            again.effort = beam
+            res = again
+            if res.answer is not None:
+                break
         return res
 
     def _verified(self, scene, res, ranked, bench) -> Result:
