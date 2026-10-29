@@ -170,6 +170,9 @@ class ListCode(Domain):
     missing_info = False
     verifiable = True
 
+    def recognises(self, text) -> bool:
+        return bool(re.search(r"\bexamples?\s*:", text, re.I)) and "->" in text
+
     def read(self, text):
         return read(text)
 

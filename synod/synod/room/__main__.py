@@ -6,6 +6,8 @@
   python -m synod.room report [--seeds N]        compare with the old council -> results/ROOM_REPORT.md
   python -m synod.room exam                      the 40-question exam, step by step
   python -m synod.room trace                     every exam deliberation -> results/room_viewer.html
+  python -m synod.room general [--seeds N]       the same room on code and algebra -> results/GENERAL_REPORT.md
+  python -m synod.room orchestra [--seeds N]     one room for every modality -> results/ORCHESTRA_REPORT.md
 """
 from __future__ import annotations
 
@@ -71,6 +73,12 @@ def main(argv=None):
     rp.add_argument("--reuse", action="store_true", help="reuse the last comparison runs (results/room_compare.pkl)")
     sub.add_parser("exam")
     sub.add_parser("trace")
+    g = sub.add_parser("general")
+    g.add_argument("--seeds", type=int, default=3)
+    g.add_argument("--per", type=int, default=100)
+    o = sub.add_parser("orchestra")
+    o.add_argument("--seeds", type=int, default=3)
+    o.add_argument("--per", type=int, default=100)
     args = ap.parse_args(argv)
 
     if args.cmd == "train":
@@ -113,6 +121,14 @@ def main(argv=None):
         from .exam import sit_room
         for name, (r_, w_, a_) in sit_room(verbose=True).items():
             print(f"{name}: {r_}/40 right, {w_} wrong, {a_} abstained")
+    elif args.cmd == "general":
+        from .general import compare, write
+        seeds = list(range(args.seeds))
+        print(f"report written to {write(compare(seeds, per=args.per), seeds)}")
+    elif args.cmd == "orchestra":
+        from .orchestra import compare as o_compare, write as o_write
+        seeds = list(range(args.seeds))
+        print(f"report written to {o_write(o_compare(seeds, per=args.per))}")
     elif args.cmd == "trace":
         from .trace import build_viewer, export
         data = export()

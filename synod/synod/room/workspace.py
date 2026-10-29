@@ -620,6 +620,8 @@ class Domain:
     verifiable = False  # whether a problem says how to check an answer (e.g. examples to pass)
     answer_kinds = None  # the kinds of fact an answer can be (None: any)
     describes = False  # whether describe() says anything (the judge then reads it too)
+    max_steps = None  # longest solution worth trying (None: the room's setting)
+    think_harder = None  # (beam, bindings per operator) retries while unsure (None: the room's setting)
 
     def __init__(self):
         _DOMAINS[self.name] = self
@@ -628,6 +630,10 @@ class Domain:
         return (_domain, (self.name,))
 
     # reading
+    def recognises(self, text) -> bool:
+        """Is this a problem of mine? (How a room with many domains routes it.)"""
+        return True
+
     def read(self, text):
         raise NotImplementedError
 
@@ -747,7 +753,10 @@ class Arithmetic(Domain):
 
     def reviewers(self, seed: int) -> list:
         from .experts import CheckerExpert, EstimatorExpert
-        return [CheckerExpert(seed=seed), EstimatorExpert(seed=seed)]
+        out = [CheckerExpert(seed=seed), EstimatorExpert(seed=seed)]
+        for e in out:
+            e.domains = (self.name,)  # numeric checks: only for its own problems
+        return out
 
     def fmt(self, v) -> str:
         return fmt(v)

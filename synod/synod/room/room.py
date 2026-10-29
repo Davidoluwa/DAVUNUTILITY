@@ -229,7 +229,7 @@ class Room:
 
     def candidates(self, scene: Scene, ws: Workspace, bench: Bench, search: bool = False, allow_steps: bool = True):
         pool: dict = {}
-        kinds = self.domain.answer_kinds
+        kinds = scene.domain.answer_kinds
         fam = self.familiar(scene, bench)
         cost = 0.0
         spoken = []
@@ -266,12 +266,14 @@ class Room:
                 c.props.append(p)
         if not allow_steps and ws.steps and STOP not in pool and (kinds is None or ws.kinds[-1] in kinds):
             pool[STOP] = Candidate(ANSWER, ws.answer)
-        if self.domain.missing_info and INSUFFICIENT not in pool:  # always an option, backed or not
+        if scene.domain.missing_info and INSUFFICIENT not in pool:  # always an option, backed or not
             pool[INSUFFICIENT] = Candidate(CANT, UNKNOWABLE)
         cands = sorted(pool.values(), key=lambda c: c.token)
+        name = scene.domain.name
+        reviewers = [r for r in bench.reviewers if r.domains is None or name in r.domains]
         for c in cands:
             sig = []
-            for r in bench.reviewers:
+            for r in reviewers:
                 sig.extend(f"{r.name}:{s}" for s in r.review(scene, ws, c.step, c.value))
                 cost += r.cost
             c.reviews = tuple(sig)
@@ -297,12 +299,12 @@ class Room:
             left = len([r for r in open_now if r not in c.step.args])
             f.update({"step": 1.0, f"fresh|{fresh}/{len(c.step.args)}": 1.0, f"left|{min(left, 3)}": 1.0,
                       f"uses-last|{int(ws.last in c.step.args) if ws.last else 'none'}": 1.0})
-        if self.domain.describes:  # what the result would look like (the domain's perception)
+        if scene.domain.describes:  # what the result would look like (the domain's perception)
             if c.step.op == STOP and ws.steps:
-                f.update({f"stop|last:{t}": 1.0 for t in self.domain.describe(ws, ws.fact(ws.last))})
+                f.update({f"stop|last:{t}": 1.0 for t in scene.domain.describe(ws, ws.fact(ws.last))})
             elif c.step.op not in TERMINAL and c.value is not None:
                 w2 = ws.apply(c.step, c.value)
-                f.update({f"res:{t}": 1.0 for t in self.domain.describe(w2, w2.fact(w2.last))})
+                f.update({f"res:{t}": 1.0 for t in scene.domain.describe(w2, w2.fact(w2.last))})
                 if c.value in ws.values or any(x.value == c.value for x in ws.facts.values()):
                     f["res:already-known"] = 1.0
         n = len(c.props)
@@ -313,7 +315,12 @@ class Room:
         logits = []
         fam = getattr(c, "fam", 0)
         f[f"fam:{fam}"] = 1.0
+        many = scene.domain is not self.domain  # a room for several domains: trust can depend on which
+        if many:
+            f[f"dom:{scene.domain.name}"] = 1.0
         for p in c.props:
+            if many:
+                f[f"by|{p.expert}|in:{scene.domain.name}"] = 1.0
             f[f"by|{p.expert}"] = 1.0
             f[f"by|{p.expert}|f{fam}"] = 1.0
             f[f"by|{p.expert}|c{min(int(p.confidence * 10), 9)}"] = 1.0
@@ -335,13 +342,13 @@ class Room:
 
     # -- deliberation ------------------------------------------------------
     def deliberate(self, scene: Scene, width: int, bench: Bench):
-        cfg = self.config
         routes = [Route(0.0, scene.workspace())]
         done, cost, moments = [], 0.0, {}
-        for depth in range(cfg.max_steps + 1):
+        steps = self.steps_for(scene)
+        for depth in range(steps + 1):
             nxt = []
             for r in routes:
-                cands, c_cost = self.candidates(scene, r.ws, bench, allow_steps=depth < cfg.max_steps)
+                cands, c_cost = self.candidates(scene, r.ws, bench, allow_steps=depth < steps)
                 cost += c_cost
                 if not cands:
                     continue
@@ -385,21 +392,21 @@ class Room:
                 pooled[v] = (p + math.exp(r.logp) / len(benches), r if best is None or r.logp > best.logp else best, n + 1)
         ranked = sorted(pooled.items(), key=lambda kv: -kv[1][0])
         res.answers = [(v, p, n) for v, (p, _, n) in ranked]
-        if self.domain.verifiable and scene.target is not None:
+        if scene.domain.verifiable and scene.target is not None:
             return self._verified(scene, res, ranked, benches[-1])
         if ranked:
             v, (p, best, _) = ranked[0]
             res.route, res.probability = best, p
             if p >= res.threshold:
                 res.answer = v
-        if res.answer is None and self.config.think_harder and getattr(self, "_top", 1) == 1:
+        if res.answer is None and self.harder_for(scene) and getattr(self, "_top", 1) == 1:
             return self._harder(scene, res, benches)
         return res
 
     def _harder(self, scene, res, benches) -> Result:
         """Unsure: deliberate again with a wider beam and more ways for each
         operator to apply itself, wider each time, until an answer is clear."""
-        for beam, top in self.config.think_harder:
+        for beam, top in self.harder_for(scene):
             self._top = top
             try:
                 again = self.answer(scene, beam, benches)
@@ -417,7 +424,7 @@ class Room:
         must pass): deliver the most probable route that passes; if none of the
         open routes does, search for one, guided by the room itself."""
         for v, (p, best, _) in ranked:
-            if self.domain.matches(v, scene.target):
+            if scene.domain.matches(v, scene.target):
                 res.route, res.probability, res.answer, res.verified = best, p, v, True
                 return res
         cfg = self.config
@@ -448,7 +455,7 @@ class Room:
         at each step, and how the judge weighed it)."""
         trail, logp, cost = [], 0.0, 0.0
         for ws, step in path:
-            allow = step.op not in TERMINAL or len(ws.steps) < self.config.max_steps
+            allow = step.op not in TERMINAL or len(ws.steps) < self.steps_for(scene)
             cands, c = self.candidates(scene, ws, bench, allow_steps=allow)
             cost += c
             key = _key(step)
@@ -462,6 +469,12 @@ class Room:
             trail.append((Moment(ws, cands, gates), k))
             logp += math.log(max(gates[k + 1], 1e-9))
         return Route(logp, path[-1][0], trail), cost
+
+    def steps_for(self, scene) -> int:
+        return scene.domain.max_steps or self.config.max_steps
+
+    def harder_for(self, scene) -> tuple:
+        return scene.domain.think_harder if scene.domain.think_harder is not None else self.config.think_harder
 
     def grade(self, task, res) -> str:
         """right / wrong / abstain, as the domain judges it."""
@@ -492,7 +505,7 @@ class Room:
             res._bench = self.full
         if not self.config.learn:
             return res
-        if self.domain.verifiable and scene.target is not None:  # the problem checks itself
+        if scene.domain.verifiable and scene.target is not None:  # the problem checks itself
             res.label = scene.target
             path = self._retell(scene, res.route and self._path(res.route) if res.verified else None)
             if path is not None:
@@ -530,7 +543,7 @@ class Room:
 
     # -- finding a worked solution for a revealed answer -------------------
     def reference(self, scene: Scene, label, res: Result, bench: Bench):
-        if res.route is not None and self.domain.matches(res.route.outcome, label):
+        if res.route is not None and scene.domain.matches(res.route.outcome, label):
             self.stats["own_solution"] += 1
             return self._path(res.route)
         if label is UNKNOWABLE:  # the move it needed: say so at the start
@@ -555,7 +568,7 @@ class Room:
         best = None  # (log probability, workspace)
         routes = [(0.0, scene.workspace())]
         self.search_cost = 0.0  # compute spent, so searching is never free
-        for depth in range(cfg.max_steps):
+        for depth in range(self.steps_for(scene)):
             nxt = []
             for lp, ws in routes:
                 cands, c_cost = self.candidates(scene, ws, bench, search=True)
@@ -568,7 +581,7 @@ class Room:
                     if best is not None and lp2 <= best[0]:
                         continue
                     w2 = ws.apply(c.step, c.value)
-                    if self.domain.matches(c.value, label):
+                    if scene.domain.matches(c.value, label):
                         best = (lp2, w2)
                     else:
                         nxt.append((lp2, w2))
@@ -587,7 +600,7 @@ class Room:
             return None
         if best is None:
             found = []
-            for prog in self.domain.fallback(scene, label):
+            for prog in scene.domain.fallback(scene, label):
                 self.search_cost += 0.02 * scene.cache.get("fallback_runs", 0)
                 scene.cache["fallback_runs"] = 0
                 ws = scene.workspace()
@@ -597,7 +610,7 @@ class Room:
                         break
                     ws = ws.apply(step, v)
                 else:
-                    if self.domain.matches(ws.answer, label):
+                    if scene.domain.matches(ws.answer, label):
                         found.append((len(ws.steps), len(found), ws))
             if not found:
                 return None
@@ -621,7 +634,7 @@ class Room:
             for ws, step in path:
                 m = moments.get(ws.history)
                 if m is None:
-                    allow = step.op not in TERMINAL or len(ws.steps) < self.config.max_steps
+                    allow = step.op not in TERMINAL or len(ws.steps) < self.steps_for(scene)
                     cands, _ = self.candidates(scene, ws, bench, allow_steps=allow)
                     m = Moment(ws, cands, self.gate(ws, cands))
                 target = _key(step)
@@ -639,7 +652,8 @@ class Room:
                 e.learn(scene, path, source, w)
             if labeled:
                 for r in learner.reviewers:
-                    r.learn_review(scene, path, res.label)
+                    if r.domains is None or scene.domain.name in r.domains:
+                        r.learn_review(scene, path, res.label)
 
     def _train_judge(self, scene, ws, cands, target) -> None:
         """The judge learns whom to trust at this step: maximise the probability

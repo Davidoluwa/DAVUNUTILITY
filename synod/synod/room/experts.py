@@ -53,7 +53,8 @@ class Scene:
     """The question as the room perceives it, computed once."""
 
     def __init__(self, question: str, domain=None):
-        self.domain = domain or ARITH
+        domain = domain or ARITH
+        self.domain = domain.pick(question) if hasattr(domain, "pick") else domain  # a room of many domains routes it
         self.question = question
         self.reading = self.domain.read(question)
         r = self.reading
@@ -174,6 +175,7 @@ class Expert:
     kind = SYMBOLIC
     role = "step"  # step | review
     cost = 0.02
+    domains = None  # the domains whose problems it works on (None: all)
 
     def __init__(self, name: str, seed: int = 0):
         self.name = name
@@ -1007,6 +1009,7 @@ def population(n_neural: int = 8, seed: int = 0, operators=None, memory=True, an
     experts = [OperatorExpert(op, seed + i) for i, op in enumerate(ops)]
     binders = {e.op: e for e in experts}
     tokens = list(domain.ops) + [STOP] + ([INSUFFICIENT] if domain.missing_info else [])
+    tokens = list(dict.fromkeys(tokens))
     for k in range(n_neural):
         n = NeuralExpert(f"neural-{k + 1}", seed * 101 + k, tokens=tokens)
         n.binders = binders

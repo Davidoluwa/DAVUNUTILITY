@@ -466,6 +466,11 @@ class Algebra(Domain):
     missing_info = False
     answer_kinds = (NUM,)  # the question asks for a number
     describes = True
+    max_steps = 10  # a system takes a few moves per variable
+    think_harder = ((12, 3),)
+
+    def recognises(self, text) -> bool:
+        return bool(read(text).eqs)
 
     def read(self, text):
         return read(text)

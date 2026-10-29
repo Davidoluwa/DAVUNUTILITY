@@ -340,3 +340,40 @@ Limitations and next steps:
 - **Pattern-copying still hurts new combinations.** Operators alone get 44% there, the full room 33%. The judge's trust in the neural pool, memory and analogy was earned where familiar frames were always right.
 - **The neural pool didn't specialise** (≈ 5.7 bits of 6.2): responsibility-weighted training needs hard routing plus load balancing to break the symmetry.
 - **Variance.** Whole kinds of question flip between runs (new combinations 26-44%, four steps 0-22% across seeds of one variant); read the averages.
+
+## 11. One engine, many modalities
+
+### 11.1 What a domain supplies (`room/workspace.py: Domain`)
+
+Nothing in the experts, the judge, deliberation, the search for worked solutions, learning, sleep or invention refers to arithmetic any more. A `Domain` supplies:
+
+| | what | arithmetic | code | algebra |
+|---|---|---|---|---|
+| reader | problem text → facts, with where in the text each is talked about | the maths reader | description + examples | equations as written, variables, what's asked |
+| operations | name, signature (kinds of fact per argument), result kind, how to run, how to say | 28 exact operations | 26 list operations, each with its Python form | 7 algebraic moves + add/sub/mul |
+| constants | always on the table | K2 … K1000 | K1, K2 | none |
+| matching | when a result is the answer | numeric tolerance | equal on every example | numeric |
+| grading | right / wrong / abstain | against the answer | **on hidden inputs** | against the answer |
+| verifiable | does the problem carry its own check? | no | **yes: the examples** | no |
+| perception | what a fact looks like (`describe`) | nothing | nothing | raw / gathered / isolated / solved / asked |
+| extras | reviewers, fallback search, answer kinds, solution length | checker, estimator, `explain` | 1–2 step enumeration | breadth-first moves; answers are numbers; up to 10 steps |
+
+Everything else is shared code. Arithmetic's behaviour was checked unchanged through the refactor: a fingerprint of every answer and probability over 1800 practice and 120 test questions stayed byte-identical.
+
+### 11.2 Verifiable problems: no teacher, and thinking harder when the check fails
+
+When a problem carries its own check (code: the examples), the room delivers only an answer that passes it, and learns from what passes, with no answers revealed, ever. When nothing it deliberates passes, it searches (its own experts and judge guiding a beam), and if that fails it searches again twice as wide, and again (6, 12, 24 routes), stopping as soon as something passes. Search compute counts towards the cost of the question. Programs are graded on hidden inputs of other lengths and ranges, so passing the examples isn't enough.
+
+When a problem doesn't carry a check (algebra), the room can still think harder when it would otherwise abstain: deliberate again with a wider beam and with each operator offering its three best ways to apply itself instead of one.
+
+### 11.3 Code (`synod/code/`)
+
+A problem is a description and three examples (`Keep the 3 largest numbers, biggest first. Examples: [5, 1, 4, 9, 2] -> [9, 5, 4]; …`). The input is a fact holding one list per example, so every step runs on all the examples at once, and a worked solution is a program, printed as a Python function. 53 kinds of task, one to four steps: the curriculum has one to three; the test sets are new examples, new wordings, combinations never seen together, and four-step programs. Each task's examples are chosen so that leaving out any step of the reference program changes some output (the examples need every step).
+
+### 11.4 Algebra (`synod/algebra/`)
+
+Equations and systems of equations as written (`3(x + 4) - 2 = 5x - 6`; `2x + 3y = 13 and x - y = -1`), solved by seven general moves on exact linear forms: expand (multiply out, collect like terms), gather (variables left, numbers right), divide both sides by a lone variable's coefficient, isolate a variable, substitute an isolated variable into another equation, eliminate a variable between two equations (subtracting multiples), read off a value. Every move keeps the equations true, so every line of a derivation follows from the problem. There is no solve move. The domain describes each equation's shape (raw or simplified, gathered, how many variables, isolated, solved, whether it's about what the question asks), which the operator experts, the neural experts and the judge read. Curriculum: four shapes of single equation and two kinds of 2×2 system, asking for x, y or x plus y, with variables x and y. Test sets: new wordings; equation shapes never seen, with variable letters never seen; systems whose equations need expanding first (moves seen, never combined); three equations in three unknowns.
+
+### 11.5 The orchestra (`room/orchestra.py`)
+
+One room for every modality: one population (all domains' operators, one neural pool, one memory, one analogy, one goal expert, every reviewer, 76 experts) and one judge, meeting arithmetic, code and algebra mixed in one stream with nothing saying which is which. Each domain's reader says whether it recognises a problem (code: examples with arrows; algebra: an equation its parser reads; arithmetic: anything else), and the problem is read by the first that does. Operators are shared: they bind whatever facts are on the table, so a problem read as algebra can still use an arithmetic operation ("Is t a prime number?" after solving for t). Reviewers that only make sense for one domain (arithmetic's numeric checks) say so. The judge reads which domain a problem came from and, per expert, its trust on that domain; nothing else is told.
