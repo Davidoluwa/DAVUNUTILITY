@@ -1,0 +1,17 @@
+Hello world
+parseHttpRequest and XMLHttpRequest and getURLForID
+HELLO WORLD, I'M HERE. He's done; they'll go, we've won, I'd say
+def merge_intervals(intervals: list[tuple[int, int]]) -> list:\n    intervals.sort()\n    return intervals
+    indented   spaces\t\ttabs   \n\n\n  trailing
+numbers 1234567 and 3.14159 and 2026-11-05
+<|user|>Write a function<|assistant|><think>ok</think>Sure
+emoji 🙂🚀 and accents café naïve résumé
+中文测试 日本語のテキスト カタカナ 한국어
+// C++: std::vector<int> v{1,2,3}; v.push_back(42);
+if (x != y && a >= b || !flag) { return -1; }
+"quoted" 'single' `backtick` ((nested)) [[brackets]]
+https://example.com/path?q=1&r=two#frag
+snake_case_name CONSTANT_NAME camelCaseName PascalCaseName
+\r\n windows\r\nline endings\r\n
+mixed   \n  \n whitespace\t \nend
+Ｆｕｌｌｗｉｄｔｈ and ½ fraction and Ⅻ numeral

@@ -1,0 +1,79 @@
+// Flint forward pass for single-token decode. Weights are used in place from the mmap'd GGUF.
+#pragma once
+#include <cstdint>
+#include <string>
+#include <vector>
+
+#include "gguf.h"
+#include "quants.h"
+#include "threadpool.h"
+
+namespace fl {
+
+struct Mat {
+    const uint8_t *data = nullptr;
+    uint32_t type = 0;
+    int64_t n_in = 0;   // row length
+    int64_t n_out = 0;  // rows (per expert, for 3D expert tensors)
+    size_t row_bytes = 0;
+    const uint8_t *row(int64_t r) const { return data + size_t(r) * row_bytes; }
+};
+
+struct Layer {
+    const float *attn_norm, *ffn_norm, *q_norm, *k_norm, *sinks;
+    Mat wq, wk, wv, wo;
+    bool dense, swa, rope;
+    Mat ffn_gate, ffn_up, ffn_down;            // dense layers
+    Mat router;                                // MoE layers
+    Mat gate_exps, up_exps, down_exps;         // [n_expert] x [n_out x n_in]
+    Mat gate_sh, up_sh, down_sh;               // shared expert
+};
+
+struct Config {
+    int n_layer, n_embd, n_head, n_head_kv, head_dim, n_ff, n_expert, n_expert_used, n_ff_exp, n_ff_shexp, n_swa;
+    int64_t n_vocab;
+    float rms_eps, rope_base;
+};
+
+// Wall-clock split of one decode step, accumulated across steps.
+struct Timings {
+    double attn_proj = 0, attn = 0, router = 0, experts = 0, dense_ffn = 0, head = 0;
+    int tokens = 0;
+};
+
+class Flint {
+public:
+    Flint(const GGUF &g, int n_ctx, ThreadPool &pool);
+
+    // Run one token at position pos (positions must arrive in order). Returns n_vocab logits.
+    const float *forward(int32_t token, int pos);
+
+    const Config &config() const { return cfg_; }
+    // Experts chosen at the last step: [n_moe_layers][n_expert_used].
+    const std::vector<uint8_t> &last_experts() const { return last_experts_; }
+    Timings timings;
+
+private:
+    void matvec(const Mat &m, const float *x, float *y);  // y = M x, parallel over rows
+    void attention(const Layer &L, int il, int pos);
+    void moe(const Layer &L, int il);
+    void dense_ffn(const Layer &L);
+
+    const GGUF &g_;
+    ThreadPool &pool_;
+    Config cfg_;
+    int n_ctx_;
+    std::vector<Layer> layers_;
+    Mat tok_embd_, output_;
+    const float *output_norm_;
+    std::vector<int> kv_slot_layer_;  // per layer: index into kv_ caches
+    std::vector<std::vector<float>> k_cache_, v_cache_;
+    std::vector<float> inv_freq_;
+
+    // Scratch.
+    std::vector<float> x_, h_, q_, k_, v_, att_, ffn_, logits_, router_logits_, moe_out_, gu_;
+    std::vector<block_q8_K> hq_, aq_;
+    std::vector<uint8_t> last_experts_;
+};
+
+}  // namespace fl

@@ -5,17 +5,30 @@ A from-scratch C/C++ inference engine for small-active MoE models, starting with
 
 v1 targets: under 4 GB RAM, as little memory traffic per token as possible, 100+ tok/s.
 
-## Build
+## Status
+
+Flint runs end to end and produces correct output: about 6.5 tok/s decode on the 4 vCPU box,
+with weights mmap'd from `flint-UD-IQ3_XXS.gguf`. Nothing is optimized yet.
+
+- Kernels for q6_K, iq2_s, iq3_xxs and bf16 match a scalar reference to 1e-8.
+- Tokenizer matches the original Hugging Face tokenizer on 95k tokens of code, JSON, Markdown,
+  CJK and emoji. llama.cpp does not split camelCase the way the original does; we do.
+
+## Build and run
 
 ```bash
-mkdir -p build
-gcc -O3 -march=native -pthread bench/membw.c -o build/membw
-gcc -O2 -pthread bench/diskbw.c -o build/diskbw
-g++ -O2 -std=c++17 tools/inspect.cpp src/gguf.cpp -o build/inspect
+make
+./build/run -m flint-UD-IQ3_XXS.gguf --chat -p "Write a prime check in Python" -n 200
 ```
+
+Flags: `-n` tokens, `--temp` (0 = greedy), `--top-k`, `--top-p`, `-t` threads, `--ctx`,
+`--trace FILE` (writes the routed expert ids per token, uint8 `[47 layers x 6]` per token).
 
 ## Tools
 
+- `build/run`: generation, with a per-token time breakdown.
+- `build/test_quants MODEL`: kernel correctness against the scalar reference, and throughput.
+- `build/tokenize MODEL STRINGS.txt`: token ids per line. Compare with `tools/hf_tokenize.py`.
 - `build/membw`: read bandwidth by working-set size and thread count (the decode roofline).
 - `build/diskbw FILE`: direct (uncached) disk reads at several chunk sizes and queue depths.
 - `build/inspect MODEL.gguf [dram_GBps] [disk_GBps]`: GGUF metadata, tensor types, and the
