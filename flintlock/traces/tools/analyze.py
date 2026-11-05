@@ -51,6 +51,68 @@ def lru_layer(seq_warm, seq_eval, cap):
     return hits, seq_eval.size
 
 
+def ema_layer(seq_warm, seq_eval, cap, decay):
+    """Per-layer cache that evicts the resident expert with the lowest decayed selection count
+    (score = sum over past tokens of decay^age * [selected]), never one the current token needs.
+    Same interface as lru_layer. A cheap stand-in for frequency-aware policies (LFU with aging, RHAC)."""
+    score = np.zeros(N_EXP)
+    cached = np.zeros(N_EXP, bool)
+    hits = 0
+    t0 = seq_warm.shape[0]
+    for t, row in enumerate(np.concatenate([seq_warm, seq_eval], 0)):
+        score *= decay
+        score[row] += 1.0
+        need = np.zeros(N_EXP, bool)
+        need[row] = True
+        for e in row:
+            if cached[e]:
+                if t >= t0:
+                    hits += 1
+                continue
+            if cached.sum() >= cap:
+                cand = np.where(cached & ~need, score, np.inf)
+                cached[int(np.argmin(cand))] = False
+            cached[e] = True
+    return hits, seq_eval.size
+
+
+def lru_prefetch_layer(seq_warm, seq_eval, pred, cap):
+    """Per-layer LRU where, before each decode step, the predicted experts `pred[t]` (from the
+    previous layer's state) are loaded into the cache if absent (inserted as most recent).
+    Returns (demand hits, demand misses = stalls, prefetch loads) over seq_eval."""
+    c = OrderedDict()
+
+    def insert(e):
+        c[e] = None
+        if len(c) > cap:
+            c.popitem(last=False)
+
+    for row in seq_warm:
+        for e in row:
+            e = int(e)
+            if e in c:
+                c.move_to_end(e)
+            else:
+                insert(e)
+    hits = stalls = pre = 0
+    for t, row in enumerate(seq_eval):
+        if pred is not None:
+            for e in pred[t]:
+                e = int(e)
+                if e not in c:
+                    insert(e)
+                    pre += 1
+        for e in row:
+            e = int(e)
+            if e in c:
+                c.move_to_end(e)
+                hits += 1
+            else:
+                insert(e)
+                stalls += 1
+    return hits, stalls, pre
+
+
 def lru_global(warm, ev, cap):
     """One LRU pool shared by all layers, accessed in layer order within each token.
     warm/ev are [T, 47, 6]. Returns per-layer hits and total lookups per layer."""
@@ -163,6 +225,7 @@ def prefetch_metrics(hd, W, nw, eps, actual):
     res = {k: np.zeros((N_MOE - 1, 2)) for k in ('a_router_input_L', 'b_ffn_inp_L_renorm', 'c_l_out_L', 'skip2_ffn_inp_L')}
     res['skip2_ffn_inp_L'] = np.zeros((N_MOE - 2, 2))
     res['self_check'] = np.zeros((N_MOE, 2))
+    pred_sets = {6: [None] * N_MOE, 12: [None] * N_MOE}  # predictor b, for layer li from layer li-1
     for li in range(N_MOE):
         x_inp = bf16_to_f32(np.asarray(hd['ffn_inp'][:, li]))
         x_out = bf16_to_f32(np.asarray(hd['l_out'][:, li]))
@@ -177,6 +240,9 @@ def prefetch_metrics(hd, W, nw, eps, actual):
             }
             for name, p in preds.items():
                 res[name][li] = [recall_at(p, actual[:, nxt], 6), recall_at(p, actual[:, nxt], 12)]
+            order = np.argsort(-preds['b_ffn_inp_L_renorm'], axis=-1)
+            pred_sets[6][nxt] = order[:, :6]
+            pred_sets[12][nxt] = order[:, :12]
         if li + 2 < N_MOE:
             p = rmsnorm(x_inp, nw[li + 2], eps) @ W[li + 2].T
             res['skip2_ffn_inp_L'][li] = [recall_at(p, actual[:, li + 2], 6), recall_at(p, actual[:, li + 2], 12)]
@@ -189,7 +255,7 @@ def prefetch_metrics(hd, W, nw, eps, actual):
         prev[li, 0] = (a[:, :, None] == p1[:, None, :]).any(2).sum(1).mean() / N_USED
         prev[li, 1] = (a[:, :, None] == p2[:, None, :]).any(2).sum(1).mean() / N_USED
     res['prev_token_same_layer'] = prev
-    return res
+    return res, pred_sets
 
 
 def main():
@@ -226,6 +292,9 @@ def main():
             if not args.no_belady:
                 b = np.array([belady_layer(warm[:, l], ev[:, l], cap)[0] for l in range(N_MOE)]) / (len(dec) * N_USED)
                 ent['overall_hit_belady_partitioned'] = float(b.mean())
+            for d in (0.9, 0.98, 0.995):
+                h = np.array([ema_layer(warm[:, l], ev[:, l], cap, d)[0] for l in range(N_MOE)]) / (len(dec) * N_USED)
+                ent[f'overall_hit_ema{d}_partitioned'] = float(h.mean())
             miss = (1 - ent['overall_hit_global_pool']) * N_USED * N_MOE
             ent['misses_per_token_global'] = float(miss)
             ent['disk_MB_per_token_global'] = float(miss * EXPERT_BYTES / 1e6)
@@ -238,6 +307,7 @@ def main():
             pooled['union'][w].append(u)
             r['union'][str(w)] = {'mean': float(u.mean()), 'p50': float(np.median(u)), 'p90': float(np.percentile(u, 90)),
                                    'max': int(u.max()), 'max_possible': 6 * w,
+                                   'uniform_iid_expected': float(N_EXP * (1 - (1 - N_USED / N_EXP) ** w)),
                                    'per_layer_mean': u.mean(1).round(2).tolist()}
         hot10 = hotness(ev, 0.10)
         hot20 = hotness(ev, 0.20)
@@ -253,10 +323,23 @@ def main():
             dec_pos = np.fromfile(os.path.join(args.hidden_dir, f'trace_{name}.dec_pos.i32'), dtype=np.int32)
             assert (dec_pos == dec).all()
             W, nw, eps = router
-            pm = prefetch_metrics(hd, W, nw, eps, topk[dec].astype(np.int64))
+            pm, pred_sets = prefetch_metrics(hd, W, nw, eps, topk[dec].astype(np.int64))
             r['prefetch'] = {k: {'recall@6_mean': float(v[:, 0].mean()), 'recall@12_mean': float(v[:, 1].mean()),
                                  'recall@6_per_layer': v[:, 0].round(3).tolist(), 'recall@12_per_layer': v[:, 1].round(3).tolist()}
                              for k, v in pm.items()}
+            # LRU + next-layer prefetch (predictor b). Layer 2 (index 0) has no MoE layer before it: no prefetch.
+            comb = {}
+            for frac in (0.20, 0.30):
+                cap = int(round(frac * N_EXP))
+                for kp in (0, 6, 12):
+                    s = np.array([lru_prefetch_layer(warm[:, l], ev[:, l], pred_sets[kp][l] if kp else None, cap)
+                                  for l in range(N_MOE)])  # [47, 3]
+                    hits, stalls, pre = s.sum(0) / len(dec)
+                    comb[f'{int(frac * 100)}%_prefetch{kp}'] = {
+                        'demand_hit_rate': float(hits / (hits + stalls)), 'stalls_per_token': float(stalls),
+                        'prefetch_loads_per_token': float(pre), 'disk_MB_per_token': float((stalls + pre) * EXPERT_BYTES / 1e6),
+                        'stall_MB_per_token': float(stalls * EXPERT_BYTES / 1e6)}
+            r['lru_plus_prefetch'] = comb
         report[name] = r
         print(f'{name}: done', file=sys.stderr)
 
