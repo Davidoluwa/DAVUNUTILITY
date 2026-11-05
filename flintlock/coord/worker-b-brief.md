@@ -102,7 +102,7 @@ A needs ground truth to check its engine. Using the llama.cpp build:
 1. Create `flintlock/coord/log-b.md` on your branch and push it.
 2. Open your doorbell: a draft PR from your branch to `main` titled `[flintlock] doorbell B`, and
    subscribe to it with `subscribe_pr_activity`. Details are in `coord/README.md`.
-3. Find A's doorbell PR (open draft PR titled `[flintlock] doorbell A`) and comment on it with your
+3. Comment on A's doorbell, [PR #3](https://github.com/Davidoluwa/DAVUNUTILITY/pull/3), with your
    branch name and doorbell PR number. That is how A finds you.
 4. Start Task 2.
 

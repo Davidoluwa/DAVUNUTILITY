@@ -16,7 +16,7 @@ its doorbell, and only it subscribes to that PR (a PR delivers events to one ses
 
 | Worker | Doorbell PR | Who subscribes |
 | --- | --- | --- |
-| A | draft PR `ccr-11fa8e16-o7vrpz` -> `main`, titled `[flintlock] doorbell A` | A only |
+| A | [PR #3](https://github.com/Davidoluwa/DAVUNUTILITY/pull/3) (draft, `ccr-11fa8e16-o7vrpz` -> `main`) | A only |
 | B | draft PR `<B's branch>` -> `main`, titled `[flintlock] doorbell B` | B only |
 
 - **To ping the other worker, comment on their doorbell PR.** Keep it to one or two lines
