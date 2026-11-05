@@ -96,6 +96,14 @@ two things: prefetch adds total disk traffic (at a 20% cache, top-6 prefetch rai
 being the bottleneck. And a decayed-frequency (EMA 0.98) policy beats LRU by 3-8 points at 10-30%
 cache, with ~20 points of headroom to the offline optimum.
 
+B's answer-phase trace (Flint writing the code after reasoning) is harder than the reasoning
+phase on the same task: LRU at 20% cache 0.47 vs 0.57, next-layer recall@6 0.70 vs 0.77, and a hot set
+learned while reasoning covers only 18% of answer-phase picks. Expect a miss burst after `</think>`
+and size the cache for the answer phase. B's disk on an identical VM measured 1.0-2.4 GB/s with
+2-3x swings between runs, so plan for well under 3 GB/s. B also suggests repacking each expert's
+three slices (gate, up, down) into one contiguous 4 KB-aligned 1.07 MB blob: one large read per
+miss instead of three ~330-400 KB reads, which were the slowest read size measured.
+
 ## Where the time goes now (4 GB, prefetch 10, 9.8 tok/s = 102 ms/token)
 
 | Part | ms/token | Bound by |
