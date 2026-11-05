@@ -1,6 +1,6 @@
 CXX ?= g++
 CXXFLAGS ?= -O3 -march=native -std=c++17 -pthread -Wall -Wno-unused-function
-SRC = src/gguf.cpp src/quants.cpp src/tokenizer.cpp src/model.cpp
+SRC = src/gguf.cpp src/quants.cpp src/tokenizer.cpp src/model.cpp src/expert_cache.cpp
 HDR = $(wildcard src/*.h)
 
 all: build/run build/inspect build/test_quants build/tokenize build/membw build/diskbw

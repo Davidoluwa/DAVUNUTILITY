@@ -54,6 +54,8 @@ public:
     double get_float(const std::string &key, double def) const;
     std::string get_str(const std::string &key, const std::string &def = "") const;
     const Tensor *tensor(const std::string &name) const;
+    // Unmap and evict every page of the file from memory (data stays readable; it refaults).
+    void drop_page_cache() const;
 
     uint32_t version = 0;
     size_t file_size = 0;

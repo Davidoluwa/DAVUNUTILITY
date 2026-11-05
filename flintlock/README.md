@@ -7,8 +7,9 @@ v1 targets: under 4 GB RAM, as little memory traffic per token as possible, 100+
 
 ## Status
 
-Flint runs end to end and produces correct output: about 6.5 tok/s decode on the 4 vCPU box,
-with weights mmap'd from `flint-UD-IQ3_XXS.gguf`. Nothing is optimized yet.
+Flint runs end to end and produces correct output. On the 4 vCPU box: **9.8 tok/s decode in
+3.7 GB of RAM** (`--ram-gb 4 --prefetch 10`), with output identical to running fully in memory.
+See `docs/DESIGN.md` for measurements and the feasibility analysis of the v1 targets.
 
 - Kernels for q6_K, iq2_s, iq3_xxs and bf16 match a scalar reference to 1e-8.
 - Tokenizer matches the original Hugging Face tokenizer on 95k tokens of code, JSON, Markdown,
@@ -22,12 +23,20 @@ make
 ```
 
 Flags: `-n` tokens, `--temp` (0 = greedy), `--top-k`, `--top-p`, `-t` threads, `--ctx`,
-`--trace FILE` (writes the routed expert ids per token, uint8 `[47 layers x 6]` per token).
+`--trace FILE` (routed expert ids per token, uint8 `[47 layers x 6]` per token),
+`--ram-gb N` (total memory budget; enables the expert cache), `--prefetch N` (experts to prefetch
+for the next layer), `--steer depth,ratio` (cache-aware routing; changes outputs).
+
+Low-memory run: `./build/run -m MODEL --chat -p "..." --ram-gb 4 --prefetch 10`
 
 ## Tools
 
 - `build/run`: generation, with a per-token time breakdown.
+- `build/eval -m MODEL --text FILE [--save ref.bin | --ref ref.bin]`: perplexity, and top-1/KL
+  agreement with a saved reference run. Prices any approximation.
 - `build/test_quants MODEL`: kernel correctness against the scalar reference, and throughput.
+- `build/bench_moe MODEL [threads]`: the MoE gate/up step in isolation.
+- `tools/trace_stats.py TRACE`: expert cache hit rates and reuse from `run --trace`.
 - `build/tokenize MODEL STRINGS.txt`: token ids per line. Compare with `tools/hf_tokenize.py`.
 - `build/membw`: read bandwidth by working-set size and thread count (the decode roofline).
 - `build/diskbw FILE`: direct (uncached) disk reads at several chunk sizes and queue depths.

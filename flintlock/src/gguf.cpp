@@ -140,6 +140,11 @@ GGUF::~GGUF() {
     if (fd_ >= 0) ::close(fd_);
 }
 
+void GGUF::drop_page_cache() const {
+    madvise(const_cast<uint8_t *>(base), file_size, MADV_DONTNEED);
+    posix_fadvise(fd_, 0, 0, POSIX_FADV_DONTNEED);
+}
+
 const KV *GGUF::get(const std::string &key) const {
     auto it = kv_idx_.find(key);
     return it == kv_idx_.end() ? nullptr : &kvs[it->second].second;

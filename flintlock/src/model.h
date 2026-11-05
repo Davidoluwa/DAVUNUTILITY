@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include "expert_cache.h"
 #include "gguf.h"
 #include "quants.h"
 #include "threadpool.h"
@@ -30,6 +31,15 @@ struct Layer {
     Mat gate_sh, up_sh, down_sh;               // shared expert
 };
 
+// Cache-aware routing: a routed expert that is not in memory may be swapped for one of the
+// next `depth` ranked experts that is, if its router score is at least `ratio` times as high.
+// depth 0 keeps exact routing.
+struct Steer {
+    int depth = 0;
+    float ratio = 0.9f;
+    uint64_t swaps = 0, picks = 0;
+};
+
 struct Config {
     int n_layer, n_embd, n_head, n_head_kv, head_dim, n_ff, n_expert, n_expert_used, n_ff_exp, n_ff_shexp, n_swa;
     int64_t n_vocab;
@@ -38,7 +48,8 @@ struct Config {
 
 // Wall-clock split of one decode step, accumulated across steps.
 struct Timings {
-    double attn_proj = 0, attn = 0, router = 0, experts = 0, dense_ffn = 0, head = 0;
+    double attn_proj = 0, attn = 0, router = 0, expert_io = 0, experts = 0, dense_ffn = 0, head = 0;
+    double exp_gu = 0, exp_act = 0, exp_down = 0;  // parts of `experts`
     int tokens = 0;
 };
 
@@ -68,6 +79,14 @@ public:
     const float *forward(int32_t token, int pos);
 
     const Config &config() const { return cfg_; }
+    // Serve routed experts from a fixed-size cache instead of the file mapping.
+    void set_expert_cache(ExpertCache *c) { cache_ = c; }
+    std::vector<int> moe_layers() const;
+    Steer steer;
+    // Experts to prefetch for the next layer, predicted by running the next layer's router on
+    // this layer's hidden state. 0 disables prefetching.
+    int prefetch_n = 0;
+    uint64_t pred_hits = 0, pred_total = 0;  // how many routed experts the prediction got right
     // Experts chosen at the last step: [n_moe_layers][n_expert_used].
     const std::vector<uint8_t> &last_experts() const { return last_experts_; }
     Timings timings;
@@ -89,11 +108,14 @@ private:
     std::vector<std::vector<float>> k_cache_, v_cache_;
     std::vector<float> inv_freq_, rope_cos_, rope_sin_;
     std::unique_ptr<HugeArena> arena_;
+    ExpertCache *cache_ = nullptr;
 
     // Scratch.
     std::vector<float> x_, h_, q_, k_, v_, att_, ffn_, logits_, router_logits_, moe_out_, gu_;
     std::vector<block_q8_K> hq_, aq_;
     std::vector<uint8_t> last_experts_;
+    std::vector<std::vector<int>> predicted_;  // per layer: experts prefetched for it
+    std::vector<float> pred_logits_;
 };
 
 }  // namespace fl

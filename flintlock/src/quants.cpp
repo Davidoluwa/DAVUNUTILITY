@@ -243,17 +243,25 @@ static float dot_iq3_xxs(const block_iq3_xxs *x, const block_q8_K *y, int nb) {
 #if defined(__AVX512BW__) && defined(__AVX512VNNI__)
 #define FL_AVX512 1
 
+// Lane selectors for _mm512_permutexvar_epi16, built at compile time: 64 weights map to 32
+// int16 lanes, and 8 consecutive lanes share one scale.
+struct LaneIdx {
+    alignas(64) int16_t v[4][32];
+};
+static constexpr LaneIdx make_lane_idx() {
+    LaneIdx t{};
+    for (int k = 0; k < 4; k++)
+        for (int m = 0; m < 32; m++) t.v[k][m] = int16_t(4 * k + m / 8);
+    return t;
+}
+static constexpr LaneIdx kLaneIdx = make_lane_idx();  // row 0 doubles as the iq2_s selector
+
 static float dot_q6_K_512(const block_q6_K *x, const block_q8_K *y, int nb) {
     const __m512i m4 = _mm512_set1_epi8(0xF), m3 = _mm512_set1_epi8(3);
     const __m512i sh01 = _mm512_set_epi64(2, 2, 2, 2, 0, 0, 0, 0);  // high bits for elements 0-31 | 32-63
     const __m512i sh23 = _mm512_set_epi64(6, 6, 6, 6, 4, 4, 4, 4);  // ... for 64-95 | 96-127
-    // Scale lane selectors: 64 weights -> 32 int16 lanes, 8 lanes share one 16-weight scale.
-    __m512i sidx[4];
-    for (int k = 0; k < 4; k++) {
-        alignas(64) int16_t v[32];
-        for (int m = 0; m < 32; m++) v[m] = int16_t(4 * k + m / 8);
-        sidx[k] = _mm512_load_si512(v);
-    }
+    const __m512i sidx[4] = {_mm512_load_si512(kLaneIdx.v[0]), _mm512_load_si512(kLaneIdx.v[1]),
+                             _mm512_load_si512(kLaneIdx.v[2]), _mm512_load_si512(kLaneIdx.v[3])};
     __m512 facc = _mm512_setzero_ps();
     __m256 foff = _mm256_setzero_ps();
     for (int i = 0; i < nb; i++) {
@@ -281,9 +289,7 @@ static float dot_q6_K_512(const block_q6_K *x, const block_q8_K *y, int nb) {
 }
 
 static float dot_iq2_s_512(const block_iq2_s *x, const block_q8_K *y, int nb) {
-    alignas(64) int16_t v[32];
-    for (int m = 0; m < 32; m++) v[m] = int16_t(m / 8);
-    const __m512i sidx = _mm512_load_si512(v);
+    const __m512i sidx = _mm512_load_si512(kLaneIdx.v[0]);
     const __m512i zero = _mm512_setzero_si512();
     const __m256i hshift = _mm256_setr_epi32(0, 2, 4, 6, 0, 2, 4, 6), three = _mm256_set1_epi32(3);
     __m512 facc = _mm512_setzero_ps();

@@ -45,6 +45,19 @@ public:
         });
     }
 
+    // Hand out [0, n) in chunks through an atomic counter: for rows of uneven cost.
+    template <class F>
+    void parallel_for_dynamic(int64_t n, int64_t chunk, F &&f) {
+        std::atomic<int64_t> next{0};
+        run([&](int t, int) {
+            for (;;) {
+                const int64_t b = next.fetch_add(chunk, std::memory_order_relaxed);
+                if (b >= n) break;
+                f(b, b + chunk < n ? b + chunk : n, t);
+            }
+        });
+    }
+
 private:
     void loop(int t) {
         uint64_t seen = 0;

@@ -184,6 +184,8 @@ Flint::Flint(const GGUF &g, int n_ctx, ThreadPool &pool, bool resident) : g_(g),
     hq_.resize(std::max({cfg_.n_embd, cfg_.n_head * hd, cfg_.n_ff}) / QK_K + 1);
     aq_.resize(std::max<int64_t>(cfg_.n_ff, cfg_.n_ff_shexp + int64_t(cfg_.n_expert_used) * cfg_.n_ff_exp) / QK_K + 8);
     last_experts_.resize(size_t(cfg_.n_layer - n_dense) * cfg_.n_expert_used);
+    predicted_.resize(cfg_.n_layer);
+    pred_logits_.resize(cfg_.n_expert);
 }
 
 void Flint::matvec(const Mat &m, const float *x, float *y) {
@@ -314,12 +316,28 @@ void Flint::moe(const Layer &L, int il) {
     int sel[16];
     float w[16];
     {
+        const int depth = cache_ ? std::min(steer.depth, cfg_.n_expert - K) : 0;
         std::vector<int> idx(cfg_.n_expert);
         for (int e = 0; e < cfg_.n_expert; e++) idx[e] = e;
-        std::partial_sort(idx.begin(), idx.begin() + K, idx.end(),
+        std::partial_sort(idx.begin(), idx.begin() + K + depth, idx.end(),
                           [&](int a, int b) { return router_logits_[a] > router_logits_[b]; });
+        for (int k = 0; k < K; k++) sel[k] = idx[k];
+        // Swap missing experts (lowest-ranked first) for resident runners-up with close scores.
+        bool used[64] = {};
+        for (int k = K - 1; k >= 0 && depth > 0; k--) {
+            if (cache_->resident(il, sel[k])) continue;
+            for (int j = K; j < K + depth; j++) {
+                if (used[j - K] || !cache_->resident(il, idx[j])) continue;
+                if (router_logits_[idx[j]] < steer.ratio * router_logits_[sel[k]]) break;
+                sel[k] = idx[j];
+                used[j - K] = true;
+                steer.swaps++;
+                break;
+            }
+        }
+        steer.picks += K;
         float sum = 0;
-        for (int k = 0; k < K; k++) sel[k] = idx[k], w[k] = router_logits_[idx[k]], sum += w[k];
+        for (int k = 0; k < K; k++) w[k] = router_logits_[sel[k]], sum += w[k];
         sum = std::max(sum, 6.103515625e-5f);
         for (int k = 0; k < K; k++) w[k] /= sum;
     }
@@ -328,11 +346,44 @@ void Flint::moe(const Layer &L, int il) {
     for (int k = 0; k < K; k++) rec[k] = uint8_t(sel[k]);
     double t1 = now();
 
+    // Weights of the chosen experts: from the cache (loading misses) or straight from the mapping.
+    ExpertView ev[16];
+    if (cache_) {
+        cache_->acquire(il, sel, K, ev);
+        if (!predicted_[il].empty()) {
+            for (int k = 0; k < K; k++)
+                pred_hits += std::find(predicted_[il].begin(), predicted_[il].end(), sel[k]) != predicted_[il].end();
+            pred_total += K;
+        }
+        // Guess the next layer's experts from this layer's hidden state and start loading them,
+        // so the reads overlap with this layer's expert math and the next layer's attention.
+        const int nl = il + 1;
+        if (prefetch_n > 0 && nl < cfg_.n_layer && !layers_[nl].dense) {
+            const Mat &R = layers_[nl].router;
+            pool_.parallel_for(cfg_.n_expert, [&](int64_t b, int64_t e, int) {
+                for (int64_t x = b; x < e; x++) pred_logits_[x] = vec_dot(R.type, R.row(x), nullptr, h_.data(), E);
+            });
+            std::vector<int> idx(cfg_.n_expert);
+            for (int e = 0; e < cfg_.n_expert; e++) idx[e] = e;
+            const int np = std::min(prefetch_n, cfg_.n_expert);
+            std::partial_sort(idx.begin(), idx.begin() + np, idx.end(),
+                              [&](int a, int b) { return pred_logits_[a] > pred_logits_[b]; });
+            predicted_[nl].assign(idx.begin(), idx.begin() + np);
+            cache_->prefetch(nl, predicted_[nl].data(), np);
+        }
+    } else {
+        for (int k = 0; k < K; k++)
+            ev[k] = {L.gate_exps.row(int64_t(sel[k]) * F), L.up_exps.row(int64_t(sel[k]) * F),
+                     L.down_exps.row(int64_t(sel[k]) * E)};
+    }
+    double t2 = now();
+
     // Gate and up rows for the shared expert and the K routed experts, in one parallel pass.
     // Layout of gu_: [shared gate FS][shared up FS][expert k gate F][expert k up F]...
     quantize_row_q8_K(h_.data(), hq_.data(), E);
     const int64_t n_rows = 2 * FS + int64_t(K) * 2 * F;
-    pool_.parallel_for(n_rows, [&](int64_t b, int64_t e, int) {
+    // Shared-expert rows (q6_K) are cheaper than routed rows (iq2_s): balance dynamically.
+    pool_.parallel_for_dynamic(n_rows, 64, [&](int64_t b, int64_t e, int) {
         for (int64_t r = b; r < e; r++) {
             const uint8_t *row;
             uint32_t type;
@@ -343,12 +394,13 @@ void Flint::moe(const Layer &L, int il) {
             } else {
                 const int64_t rr = r - 2 * FS, k = rr / (2 * F), j = rr % (2 * F);
                 const Mat &m = j < F ? L.gate_exps : L.up_exps;
-                row = m.row(int64_t(sel[k]) * F + (j % F));
+                row = (j < F ? ev[k].gate : ev[k].up) + size_t(j % F) * m.row_bytes;
                 type = m.type;
             }
             gu_[r] = vec_dot(type, row, hq_.data(), nullptr, E);
         }
     });
+    const double t3 = now();
     // Activations: shared expert into aq_[0..FS/256), expert k into the following blocks.
     for (int i = 0; i < FS; i++) ffn_[i] = silu(gu_[i]) * gu_[FS + i];
     for (int k = 0; k < K; k++) {
@@ -357,20 +409,33 @@ void Flint::moe(const Layer &L, int il) {
     }
     quantize_row_q8_K(ffn_.data(), aq_.data(), FS + int64_t(K) * F);
 
+    const double t4 = now();
     // Down projections: each output row sums the shared expert and the weighted routed experts.
     const block_q8_K *aq_sh = aq_.data();
     pool_.parallel_for(E, [&](int64_t b, int64_t e, int) {
         for (int64_t r = b; r < e; r++) {
             float acc = vec_dot(L.down_sh.type, L.down_sh.row(r), aq_sh, nullptr, FS);
             for (int k = 0; k < K; k++)
-                acc += w[k] * vec_dot(L.down_exps.type, L.down_exps.row(int64_t(sel[k]) * E + r), aq_sh + (FS + k * F) / QK_K,
-                                      nullptr, F);
+                acc += w[k] * vec_dot(L.down_exps.type, ev[k].down + size_t(r) * L.down_exps.row_bytes,
+                                      aq_sh + (FS + k * F) / QK_K, nullptr, F);
             moe_out_[r] = acc;
         }
     });
     for (int i = 0; i < E; i++) x_[i] += moe_out_[i];
     timings.router += t1 - t0;
-    timings.experts += now() - t1;
+    timings.expert_io += t2 - t1;
+    const double t5 = now();
+    timings.experts += t5 - t2;
+    timings.exp_gu += t3 - t2;
+    timings.exp_act += t4 - t3;
+    timings.exp_down += t5 - t4;
+}
+
+std::vector<int> Flint::moe_layers() const {
+    std::vector<int> v;
+    for (int il = 0; il < cfg_.n_layer; il++)
+        if (!layers_[il].dense) v.push_back(il);
+    return v;
 }
 
 const float *Flint::forward(int32_t token, int pos) {

@@ -27,3 +27,17 @@ Findings:
 Asks for B: Task 2 traces from llama.cpp are still useful as an independent check. Task 3 reference
 logits matter most now (to quantify our numeric drift).
 Next: resident set in huge pages + AVX-512 VNNI kernels, then expert cache under 4 GB.
+
+## 2026-11-05 12:45 UTC: under 4 GB at 9.8 tok/s; v1 targets need a decision
+Done: AVX-512 kernels, huge-page resident set, O_DIRECT expert cache with fixed budget, next-layer
+prefetch, cache-aware routing option, teacher-forced eval tool. Details: docs/DESIGN.md.
+Findings:
+- `--ram-gb 4 --prefetch 10`: 9.8 tok/s, RSS 3.68 GB, output identical to full-RAM run.
+- Next-layer router prediction recall: 80% (top-6), 92% (top-10).
+- Steering (swap missing experts for resident runners-up) shifts outputs a lot: 4.7% swaps -> 86.5%
+  top-1 agreement, KL 0.22. Off by default.
+- Expert math is compute-bound on codebook decode (~9 Gweights/s per core).
+- 100 tok/s for a 2.5B-active model on 4 cores / 43 GB/s is out of reach by 2-3x on each of
+  bandwidth, disk and compute. Asking the user about hardware vs model.
+Asks for B: Task 3 reference logits still useful. Paper notes on expert-aware speculative decoding
+(DraftExpert, EVICT, AcceptMoE) and on cheap decode of codebook quants are now the most relevant.
