@@ -11,6 +11,8 @@
 #include <string>
 #include <vector>
 
+#include <sys/resource.h>
+
 #include "../src/gguf.h"
 #include "../src/model.h"
 #include "../src/tokenizer.h"
@@ -98,6 +100,8 @@ int main(int argc, char **argv) {
     }
     double t1 = now();
     m.timings = Timings{};
+    struct rusage ru0, ru1;
+    getrusage(RUSAGE_SELF, &ru0);
     std::printf("%s", text.c_str());
     std::fflush(stdout);
 
@@ -111,6 +115,7 @@ int main(int argc, char **argv) {
         record();
     }
     double t2 = now();
+    getrusage(RUSAGE_SELF, &ru1);
     if (tf) std::fclose(tf);
 
     const Timings &T = m.timings;
@@ -120,6 +125,7 @@ int main(int argc, char **argv) {
     std::fprintf(stderr, "per token (ms): attn-proj %.1f  attention %.1f  router %.1f  experts %.1f  dense-ffn %.1f  head %.1f\n",
                  1e3 * T.attn_proj / n, 1e3 * T.attn / n, 1e3 * T.router / n, 1e3 * T.experts / n, 1e3 * T.dense_ffn / n,
                  1e3 * T.head / n);
-    std::fprintf(stderr, "RSS: %ld MB\n", rss_mb());
+    std::fprintf(stderr, "RSS: %ld MB, resident weights %.2f GB, page faults during decode: %ld major, %ld minor\n",
+                 rss_mb(), m.resident_bytes() / 1e9, ru1.ru_majflt - ru0.ru_majflt, ru1.ru_minflt - ru0.ru_minflt);
     return 0;
 }

@@ -1,6 +1,7 @@
 // Flint forward pass for single-token decode. Weights are used in place from the mmap'd GGUF.
 #pragma once
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -41,9 +42,27 @@ struct Timings {
     int tokens = 0;
 };
 
+// Anonymous memory backed by 2 MB pages where the kernel allows it.
+class HugeArena {
+public:
+    explicit HugeArena(size_t bytes);
+    ~HugeArena();
+    HugeArena(const HugeArena &) = delete;
+    HugeArena &operator=(const HugeArena &) = delete;
+    uint8_t *alloc(size_t bytes);  // 64-byte aligned bump allocation
+    size_t used() const { return used_; }
+
+private:
+    uint8_t *base_ = nullptr;
+    size_t cap_ = 0, used_ = 0;
+};
+
 class Flint {
 public:
-    Flint(const GGUF &g, int n_ctx, ThreadPool &pool);
+    // resident: copy every always-active weight (everything except routed experts and the
+    // embedding table) out of the file mapping into huge-page memory.
+    Flint(const GGUF &g, int n_ctx, ThreadPool &pool, bool resident = true);
+    size_t resident_bytes() const { return arena_ ? arena_->used() : 0; }
 
     // Run one token at position pos (positions must arrive in order). Returns n_vocab logits.
     const float *forward(int32_t token, int pos);
@@ -68,7 +87,8 @@ private:
     const float *output_norm_;
     std::vector<int> kv_slot_layer_;  // per layer: index into kv_ caches
     std::vector<std::vector<float>> k_cache_, v_cache_;
-    std::vector<float> inv_freq_;
+    std::vector<float> inv_freq_, rope_cos_, rope_sin_;
+    std::unique_ptr<HugeArena> arena_;
 
     // Scratch.
     std::vector<float> x_, h_, q_, k_, v_, att_, ffn_, logits_, router_logits_, moe_out_, gu_;

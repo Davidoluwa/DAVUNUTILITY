@@ -237,6 +237,125 @@ static float dot_iq3_xxs(const block_iq3_xxs *x, const block_q8_K *y, int nb) {
     return sumf;
 }
 
+// ---------------------------------------------------------------- dot kernels (AVX-512 BW + VNNI)
+// Same math as the AVX2 kernels, 64 weights per step. Integer partial sums stay per block,
+// then one float FMA per block; a single horizontal sum per row.
+#if defined(__AVX512BW__) && defined(__AVX512VNNI__)
+#define FL_AVX512 1
+
+static float dot_q6_K_512(const block_q6_K *x, const block_q8_K *y, int nb) {
+    const __m512i m4 = _mm512_set1_epi8(0xF), m3 = _mm512_set1_epi8(3);
+    const __m512i sh01 = _mm512_set_epi64(2, 2, 2, 2, 0, 0, 0, 0);  // high bits for elements 0-31 | 32-63
+    const __m512i sh23 = _mm512_set_epi64(6, 6, 6, 6, 4, 4, 4, 4);  // ... for 64-95 | 96-127
+    // Scale lane selectors: 64 weights -> 32 int16 lanes, 8 lanes share one 16-weight scale.
+    __m512i sidx[4];
+    for (int k = 0; k < 4; k++) {
+        alignas(64) int16_t v[32];
+        for (int m = 0; m < 32; m++) v[m] = int16_t(4 * k + m / 8);
+        sidx[k] = _mm512_load_si512(v);
+    }
+    __m512 facc = _mm512_setzero_ps();
+    __m256 foff = _mm256_setzero_ps();
+    for (int i = 0; i < nb; i++) {
+        const float d = f16_to_f32(x[i].d) * y[i].d;
+        const __m256i sc16 = _mm256_cvtepi8_epi16(_mm_loadu_si128((const __m128i *)x[i].scales));
+        const __m512i sc512 = _mm512_castsi256_si512(sc16);
+        const __m256i off = _mm256_madd_epi16(sc16, _mm256_loadu_si256((const __m256i *)y[i].bsums));
+        foff = _mm256_fmadd_ps(_mm256_cvtepi32_ps(off), _mm256_set1_ps(-32.f * d), foff);
+        __m512i acc = _mm512_setzero_si512();
+        for (int h = 0; h < 2; h++) {
+            const __m512i A = _mm512_loadu_si512(x[i].ql + 64 * h);
+            const __m512i H = _mm512_broadcast_i64x4(_mm256_loadu_si256((const __m256i *)(x[i].qh + 32 * h)));
+            const __m512i hi01 = _mm512_slli_epi16(_mm512_and_si512(_mm512_srlv_epi64(H, sh01), m3), 4);
+            const __m512i hi23 = _mm512_slli_epi16(_mm512_and_si512(_mm512_srlv_epi64(H, sh23), m3), 4);
+            const __m512i qlo = _mm512_or_si512(_mm512_and_si512(A, m4), hi01);
+            const __m512i qhi = _mm512_or_si512(_mm512_and_si512(_mm512_srli_epi16(A, 4), m4), hi23);
+            const __m512i p0 = _mm512_maddubs_epi16(qlo, _mm512_loadu_si512(y[i].qs + 128 * h));
+            const __m512i p1 = _mm512_maddubs_epi16(qhi, _mm512_loadu_si512(y[i].qs + 128 * h + 64));
+            acc = _mm512_dpwssd_epi32(acc, p0, _mm512_permutexvar_epi16(sidx[2 * h], sc512));
+            acc = _mm512_dpwssd_epi32(acc, p1, _mm512_permutexvar_epi16(sidx[2 * h + 1], sc512));
+        }
+        facc = _mm512_fmadd_ps(_mm512_cvtepi32_ps(acc), _mm512_set1_ps(d), facc);
+    }
+    return _mm512_reduce_add_ps(facc) + _mm512_reduce_add_ps(_mm512_castps256_ps512(foff));
+}
+
+static float dot_iq2_s_512(const block_iq2_s *x, const block_q8_K *y, int nb) {
+    alignas(64) int16_t v[32];
+    for (int m = 0; m < 32; m++) v[m] = int16_t(m / 8);
+    const __m512i sidx = _mm512_load_si512(v);
+    const __m512i zero = _mm512_setzero_si512();
+    const __m256i hshift = _mm256_setr_epi32(0, 2, 4, 6, 0, 2, 4, 6), three = _mm256_set1_epi32(3);
+    __m512 facc = _mm512_setzero_ps();
+    for (int i = 0; i < nb; i++) {
+        const uint8_t *qs = x[i].qs, *qh = x[i].qh, *signs = x[i].qs + QK_K / 8;
+        const int8_t *q8 = y[i].qs;
+        __m512i acc = _mm512_setzero_si512();
+        for (int p = 0; p < 4; p++) {  // two 32-weight sub-blocks per step
+            // 10-bit grid index per 8 weights: low 8 bits from qs, 2 high bits from qh.
+            const uint32_t h0 = qh[2 * p], h1 = qh[2 * p + 1];
+            const __m256i hv = _mm256_set_epi32(int(h1), int(h1), int(h1), int(h1), int(h0), int(h0), int(h0), int(h0));
+            const __m256i hb = _mm256_slli_epi32(_mm256_and_si256(_mm256_srlv_epi32(hv, hshift), three), 8);
+            const __m256i gi = _mm256_or_si256(_mm256_cvtepu8_epi32(_mm_loadl_epi64((const __m128i *)qs)), hb);
+            const __m512i grid = _mm512_i32gather_epi64(gi, (const void *)iq2s_grid, 8);
+            // The 64 sign bits are already one bit per weight: use them directly as a lane mask.
+            uint64_t s;
+            std::memcpy(&s, signs, 8);
+            const __m512i yv = _mm512_loadu_si512(q8);
+            const __m512i q8s = _mm512_mask_sub_epi8(yv, __mmask64(s), zero, yv);
+            const __m512i prod = _mm512_maddubs_epi16(grid, q8s);
+            const uint32_t s0 = x[i].scales[2 * p], s1 = x[i].scales[2 * p + 1];
+            const uint64_t ls = uint64_t(2 * (s0 & 15) + 1) | uint64_t(2 * (s0 >> 4) + 1) << 16 |
+                                uint64_t(2 * (s1 & 15) + 1) << 32 | uint64_t(2 * (s1 >> 4) + 1) << 48;
+            const __m512i sv = _mm512_permutexvar_epi16(sidx, _mm512_castsi128_si512(_mm_cvtsi64_si128((long long)ls)));
+            acc = _mm512_dpwssd_epi32(acc, prod, sv);
+            qs += 8;
+            signs += 8;
+            q8 += 64;
+        }
+        facc = _mm512_fmadd_ps(_mm512_cvtepi32_ps(acc), _mm512_set1_ps(f16_to_f32(x[i].d) * y[i].d * 0.125f), facc);
+    }
+    return _mm512_reduce_add_ps(facc);
+}
+
+// Four 7-bit sign indices -> four sign bytes (bit 7 = parity), same as the ksigns_iq2xs table.
+static inline uint32_t iq3_signs(uint32_t aux) {
+    const uint32_t v = _pdep_u32(aux, 0x7F7F7F7Fu);
+    uint32_t t = v ^ (v >> 4);
+    t ^= t >> 2;
+    t ^= t >> 1;
+    return v | ((t & 0x01010101u) << 7);
+}
+
+static float dot_iq3_xxs_512(const block_iq3_xxs *x, const block_q8_K *y, int nb) {
+    const __m512i zero = _mm512_setzero_si512();
+    __m512 facc = _mm512_setzero_ps();
+    for (int i = 0; i < nb; i++) {
+        const uint8_t *qs = x[i].qs, *sas = x[i].qs + QK_K / 4;
+        const int8_t *q8 = y[i].qs;
+        __m512i acc = _mm512_setzero_si512();
+        for (int p = 0; p < 4; p++) {
+            uint32_t a0, a1;
+            std::memcpy(&a0, sas + 8 * p, 4);
+            std::memcpy(&a1, sas + 8 * p + 4, 4);
+            const __m512i idx = _mm512_cvtepu8_epi32(_mm_loadu_si128((const __m128i *)qs));
+            const __m512i grid = _mm512_i32gather_epi32(idx, (const void *)iq3xxs_grid, 4);
+            const uint64_t s = uint64_t(iq3_signs(a0)) | uint64_t(iq3_signs(a1)) << 32;
+            const __m512i yv = _mm512_loadu_si512(q8);
+            const __m512i q8s = _mm512_mask_sub_epi8(yv, __mmask64(s), zero, yv);
+            const __m512i prod = _mm512_maddubs_epi16(grid, q8s);
+            const __m512i sv = _mm512_inserti64x4(_mm512_set1_epi16(int16_t(2 * (a0 >> 28) + 1)),
+                                                  _mm256_set1_epi16(int16_t(2 * (a1 >> 28) + 1)), 1);
+            acc = _mm512_dpwssd_epi32(acc, prod, sv);
+            qs += 16;
+            q8 += 64;
+        }
+        facc = _mm512_fmadd_ps(_mm512_cvtepi32_ps(acc), _mm512_set1_ps(f16_to_f32(x[i].d) * y[i].d * 0.25f), facc);
+    }
+    return _mm512_reduce_add_ps(facc);
+}
+#endif
+
 static float dot_bf16(const uint16_t *w, const float *x, int64_t n) {
     __m512 acc = _mm512_setzero_ps();
     int64_t i = 0;
@@ -258,11 +377,24 @@ static float dot_f32(const float *w, const float *x, int64_t n) {
     return s;
 }
 
-float vec_dot(uint32_t t, const void *row, const block_q8_K *q8, const float *xf, int64_t n) {
+float vec_dot_avx2(uint32_t t, const void *row, const block_q8_K *q8, int64_t n) {
     switch (t) {
         case T_Q6_K: return dot_q6_K((const block_q6_K *)row, q8, int(n / QK_K));
         case T_IQ2_S: return dot_iq2_s((const block_iq2_s *)row, q8, int(n / QK_K));
         case T_IQ3_XXS: return dot_iq3_xxs((const block_iq3_xxs *)row, q8, int(n / QK_K));
+        default: return 0;
+    }
+}
+
+float vec_dot(uint32_t t, const void *row, const block_q8_K *q8, const float *xf, int64_t n) {
+    switch (t) {
+#ifdef FL_AVX512
+        case T_Q6_K: return dot_q6_K_512((const block_q6_K *)row, q8, int(n / QK_K));
+        case T_IQ2_S: return dot_iq2_s_512((const block_iq2_s *)row, q8, int(n / QK_K));
+        case T_IQ3_XXS: return dot_iq3_xxs_512((const block_iq3_xxs *)row, q8, int(n / QK_K));
+#else
+        case T_Q6_K: case T_IQ2_S: case T_IQ3_XXS: return vec_dot_avx2(t, row, q8, n);
+#endif
         case T_BF16: return dot_bf16((const uint16_t *)row, xf, n);
         case T_F32: return dot_f32((const float *)row, xf, n);
         default: return vec_dot_ref(t, row, q8, xf, n);

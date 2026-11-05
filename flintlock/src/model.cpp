@@ -1,8 +1,12 @@
 #include "model.h"
 
+#include <immintrin.h>
+#include <sys/mman.h>
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstring>
 #include <stdexcept>
 
 namespace fl {
@@ -55,7 +59,27 @@ std::vector<uint8_t> get_u8_arr(const GGUF &g, const std::string &key, int n) {
 
 }  // namespace
 
-Flint::Flint(const GGUF &g, int n_ctx, ThreadPool &pool) : g_(g), pool_(pool), n_ctx_(n_ctx) {
+HugeArena::HugeArena(size_t bytes) {
+    const size_t huge = size_t(2) << 20;
+    cap_ = (bytes + huge - 1) / huge * huge;
+    void *p = mmap(nullptr, cap_ + huge, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (p == MAP_FAILED) throw std::runtime_error("arena: mmap failed");
+    // Align to 2 MB so every page can be a huge page.
+    uintptr_t a = (reinterpret_cast<uintptr_t>(p) + huge - 1) & ~(huge - 1);
+    base_ = reinterpret_cast<uint8_t *>(a);
+    madvise(base_, cap_, MADV_HUGEPAGE);
+}
+HugeArena::~HugeArena() {
+    if (base_) munmap(base_, cap_);  // the unaligned head of the mapping is leaked; it is never touched
+}
+uint8_t *HugeArena::alloc(size_t bytes) {
+    size_t off = (used_ + 63) & ~size_t(63);
+    if (off + bytes > cap_) throw std::runtime_error("arena: out of space");
+    used_ = off + bytes;
+    return base_ + off;
+}
+
+Flint::Flint(const GGUF &g, int n_ctx, ThreadPool &pool, bool resident) : g_(g), pool_(pool), n_ctx_(n_ctx) {
     if (g.get_str("general.architecture") != "flint") throw std::runtime_error("model: not a flint GGUF");
     auto I = [&](const char *k) { return int(g.get_int(std::string("flint.") + k, -1)); };
     cfg_.n_layer = I("block_count");
@@ -122,7 +146,28 @@ Flint::Flint(const GGUF &g, int n_ctx, ThreadPool &pool) : g_(g), pool_(pool), n
     }
 
     inv_freq_.resize(hd / 2);
+    rope_cos_.resize(hd / 2);
+    rope_sin_.resize(hd / 2);
     for (int i = 0; i < hd / 2; i++) inv_freq_[i] = std::pow(cfg_.rope_base, -2.0f * i / hd);
+
+    if (resident) {
+        // Everything read on every token goes into one huge-page arena.
+        std::vector<Mat *> mats{&output_};
+        for (auto &L : layers_) {
+            for (Mat *m : {&L.wq, &L.wk, &L.wv, &L.wo, &L.ffn_gate, &L.ffn_up, &L.ffn_down, &L.router, &L.gate_sh,
+                           &L.up_sh, &L.down_sh})
+                if (m->data) mats.push_back(m);
+        }
+        size_t total = 0;
+        for (Mat *m : mats) total += m->row_bytes * size_t(m->n_out) + 64;
+        arena_ = std::make_unique<HugeArena>(total);
+        for (Mat *m : mats) {
+            const size_t n = m->row_bytes * size_t(m->n_out);
+            uint8_t *dst = arena_->alloc(n);
+            std::memcpy(dst, m->data, n);
+            m->data = dst;
+        }
+    }
 
     const int E = cfg_.n_embd;
     x_.resize(E);
@@ -170,7 +215,7 @@ void Flint::attention(const Layer &L, int il, int pos) {
     if (L.rope) {
         auto rot = [&](float *v) {
             for (int i = 0; i < hd / 2; i++) {
-                const float th = pos * inv_freq_[i], c = std::cos(th), s = std::sin(th);
+                const float c = rope_cos_[i], s = rope_sin_[i];
                 const float a = v[i], b = v[i + hd / 2];
                 v[i] = a * c - b * s;
                 v[i + hd / 2] = a * s + b * c;
@@ -192,28 +237,42 @@ void Flint::attention(const Layer &L, int il, int pos) {
     const int n_pos = pos - first + 1;
     const float scale = 1.0f / std::sqrt(float(hd));
     const int group = nh / nkv;
-    pool_.parallel_for(nh, [&](int64_t hb, int64_t he, int) {
-        std::vector<float> sc(n_pos);
-        for (int64_t h = hb; h < he; h++) {
-            const float *qh = &q_[h * hd];
-            const int kvh = int(h) / group;
-            float mx = L.sinks[h];
+    // One task per KV head: its K/V rows are read once and serve all `group` query heads.
+    pool_.parallel_for(nkv, [&](int64_t hb, int64_t he, int) {
+        std::vector<float> sc(size_t(group) * n_pos);
+        for (int64_t kvh = hb; kvh < he; kvh++) {
+            const float *q0 = &q_[kvh * group * hd];
             for (int j = 0; j < n_pos; j++) {
                 const float *kp = &k_cache_[ci][size_t((first + j) % slots) * kvd + kvh * hd];
-                float s = 0;
-                for (int d = 0; d < hd; d++) s += qh[d] * kp[d];
-                sc[j] = s * scale;
-                mx = std::max(mx, sc[j]);
+                for (int g = 0; g < group; g++) {
+                    const float *qh = q0 + g * hd;
+                    __m512 acc = _mm512_mul_ps(_mm512_loadu_ps(qh), _mm512_loadu_ps(kp));
+                    for (int d = 16; d < hd; d += 16) acc = _mm512_fmadd_ps(_mm512_loadu_ps(qh + d), _mm512_loadu_ps(kp + d), acc);
+                    sc[size_t(g) * n_pos + j] = _mm512_reduce_add_ps(acc) * scale;
+                }
             }
-            // The learned sink only adds to the denominator: attention mass that goes nowhere.
-            float den = std::exp(L.sinks[h] - mx);
-            for (int j = 0; j < n_pos; j++) den += (sc[j] = std::exp(sc[j] - mx));
-            float *o = &att_[h * hd];
-            std::fill(o, o + hd, 0.f);
+            // Softmax per query head. The learned sink joins the max and the denominator only:
+            // attention mass that goes nowhere.
+            for (int g = 0; g < group; g++) {
+                float *s = &sc[size_t(g) * n_pos];
+                const float sink = L.sinks[kvh * group + g];
+                float mx = sink;
+                for (int j = 0; j < n_pos; j++) mx = std::max(mx, s[j]);
+                float den = std::exp(sink - mx);
+                for (int j = 0; j < n_pos; j++) den += (s[j] = std::exp(s[j] - mx));
+                const float inv = 1.0f / den;
+                for (int j = 0; j < n_pos; j++) s[j] *= inv;
+            }
+            float *o0 = &att_[kvh * group * hd];
+            std::fill(o0, o0 + size_t(group) * hd, 0.f);
             for (int j = 0; j < n_pos; j++) {
-                const float p = sc[j] / den;
                 const float *vp = &v_cache_[ci][size_t((first + j) % slots) * kvd + kvh * hd];
-                for (int d = 0; d < hd; d++) o[d] += p * vp[d];
+                for (int g = 0; g < group; g++) {
+                    const __m512 p = _mm512_set1_ps(sc[size_t(g) * n_pos + j]);
+                    float *o = o0 + g * hd;
+                    for (int d = 0; d < hd; d += 16)
+                        _mm512_storeu_ps(o + d, _mm512_fmadd_ps(p, _mm512_loadu_ps(vp + d), _mm512_loadu_ps(o + d)));
+                }
             }
         }
     });
@@ -248,8 +307,10 @@ void Flint::moe(const Layer &L, int il) {
     rmsnorm(h_.data(), x_.data(), L.ffn_norm, E, cfg_.rms_eps);
 
     // Router: sigmoid scores, top-K, weights renormalized to sum to 1.
-    for (int e = 0; e < cfg_.n_expert; e++)
-        router_logits_[e] = 1.0f / (1.0f + std::exp(-vec_dot(L.router.type, L.router.row(e), nullptr, h_.data(), E)));
+    pool_.parallel_for(cfg_.n_expert, [&](int64_t b, int64_t e, int) {
+        for (int64_t x = b; x < e; x++)
+            router_logits_[x] = 1.0f / (1.0f + std::exp(-vec_dot(L.router.type, L.router.row(x), nullptr, h_.data(), E)));
+    });
     int sel[16];
     float w[16];
     {
@@ -314,6 +375,10 @@ void Flint::moe(const Layer &L, int il) {
 
 const float *Flint::forward(int32_t token, int pos) {
     if (pos >= n_ctx_) throw std::runtime_error("model: context full");
+    for (size_t i = 0; i < inv_freq_.size(); i++) {
+        rope_cos_[i] = std::cos(pos * inv_freq_[i]);
+        rope_sin_[i] = std::sin(pos * inv_freq_[i]);
+    }
     dequant_row(tok_embd_.type, tok_embd_.row(token), x_.data(), cfg_.n_embd);
     for (int il = 0; il < cfg_.n_layer; il++) {
         const Layer &L = layers_[il];

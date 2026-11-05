@@ -60,6 +60,9 @@ void quantize_row_q8_K(const float *x, block_q8_K *y, int64_t n);
 // (see type_uses_q8) and xf for float types.
 float vec_dot(uint32_t type, const void *row, const block_q8_K *q8, const float *xf, int64_t n);
 
+// The AVX2 kernels, kept for machines without AVX-512 and for cross-checking.
+float vec_dot_avx2(uint32_t type, const void *row, const block_q8_K *q8, int64_t n);
+
 // Slow scalar reference: dequantize the row, dequantize the activations, dot in float.
 float vec_dot_ref(uint32_t type, const void *row, const block_q8_K *q8, const float *xf, int64_t n);
 
