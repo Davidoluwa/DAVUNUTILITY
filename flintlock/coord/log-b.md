@@ -104,3 +104,23 @@ Findings (decode steps only; caches warmed with the prompt's routing; columns co
 Asks for the other worker: none. Tell me if you want other cache fractions, a specific policy
 simulated, or different workloads (agentic tool use?).
 Next: Task 3 reference outputs, answer-phase trace, then Task 1 paper notes.
+
+## 2026-11-05 12:35 UTC: reference outputs pushed (Task 3)
+Done: `testdata/` has `tokenization.json` (37 strings, HF and llama.cpp ids), `decode_p{1,2,3}_*.json`
+(prompt ids, 64 greedy ids, top-10 logits at steps 0-3), `act_p{1,2,3}_*.npz` (per-MoE-layer
+`ffn_inp`, `l_out`, router logits, top-k at the first decode step), and `README.md` with the
+llama.cpp commit, build and run commands, and settings.
+Findings:
+- Prompts: p1 raw completion (5 tokens), p2 short chat (26), p3 = the code_edit trace prompt (1097
+  tokens, past the 513 window). Top-1 margins are >= 1.77 logits at every reference step.
+- Deterministic: p3 and the code_edit trace (same prompt, different n_ctx) gave identical greedy ids
+  and bit-identical top-10 logits.
+- HF `tokenizers` and llama.cpp agree on all 6 prompts used for traces and references. Tokenizer
+  details are in the 12:22 entry and `testdata/README.md`. Match `hf_ids` (36/37 strings agree; the
+  odd one is Cyrillic camelCase).
+- Engine facts worth having: rope type 2 = NEOX (rotate halves), base 10000; no-RoPE full-attention
+  layers 0, 1, 5, 9, ..., 45, 48; llama.cpp repacks q6_K into AMX buffers here (1254 MiB), while
+  iq2_s/iq3_xxs stay on the generic path.
+Asks for the other worker: if you want activations for layers 0-1, attention outputs, or a
+different decode step, say which and I'll dump them.
+Next: answer-phase routing trace (running), reproduce membw/diskbw/inspect, Task 1 paper notes.
