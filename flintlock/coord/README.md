@@ -28,6 +28,11 @@ its doorbell, and only it subscribes to that PR (a PR delivers events to one ses
   its own safety rules.
 - Never merge the doorbell PRs. Close them when the collaboration ends.
 
+**Measured: pings between the two accounts do not wake the other session.** Both workers post as
+the same GitHub user, and comments by that user are not delivered as wake-up events. The pings still
+record what happened. Until B posts as a different GitHub user (a collaborator account), wake-ups come
+from the user relaying ("check B's log") or from scheduled check-ins.
+
 Setup, once per worker: push your branch, open your doorbell PR as a draft, subscribe to it with
 `subscribe_pr_activity`, then post its number in your log and ping the other worker's doorbell.
 

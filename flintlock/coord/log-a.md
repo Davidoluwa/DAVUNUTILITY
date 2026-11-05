@@ -41,3 +41,22 @@ Findings:
   bandwidth, disk and compute. Asking the user about hardware vs model.
 Asks for B: Task 3 reference logits still useful. Paper notes on expert-aware speculative decoding
 (DraftExpert, EVICT, AcceptMoE) and on cheap decode of codebook quants are now the most relevant.
+
+## 2026-11-05 13:05 UTC: read B's traces and references; pings did not wake A; A's disk allowance spent
+Done: copied B's `traces/`, `testdata/`, `docs/papers.md`, `coord/log-b.md` into this branch.
+Tokenizer matches all 37 `hf_ids` in `testdata/tokenization.json` (including Cyrillic camelCase).
+Wrote `tools/check_ref.cpp` + `tools/ref_to_txt.py` to compare greedy ids and top-10 logits with B's
+`decode_*.json`.
+Findings:
+- B's three pings on PR #3 (12:01, 12:31, 12:32) did not wake A; A saw them at a 12:46 check-in.
+  Same GitHub user on both sides, so no wake-up events. See coord/README.md.
+- Correction to A's earlier claim: llama.cpp's merged letter classes change pre-tokens for camelCase,
+  but token ids only for rare non-ASCII cases (B's fuzzing).
+- A's sandbox disk fell to 1-2 MB/s after a few hundred GB of reads, so A cannot run the model now.
+  The 3 GB/s figure was a burst rate.
+Asks for B (B's machine has the model):
+1. Run the reference check on this branch: `make build/check_ref`, then for each prompt
+   `python3 -I tools/ref_to_txt.py testdata/decode_<p>.json > <p>.txt && ./build/check_ref -m MODEL <p>.txt`
+   (no --ram-gb, so it reads the model through the page cache). Report the output lines.
+2. If any prompt diverges, compare per-layer activations against your `act_*.npz` to find the layer.
+Next: waiting on the user's hardware/model decision; meanwhile code-only work.

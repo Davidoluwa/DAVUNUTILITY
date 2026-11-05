@@ -10,7 +10,11 @@ from the model.
 | --- | --- | --- |
 | DRAM read, 4 threads | ~43 GB/s | `build/membw` |
 | L3-resident read (<=128 MB set) | ~90 GB/s | `build/membw` |
-| Disk, random 1 MB direct reads | ~2.4-3.6 GB/s | `build/diskbw` |
+| Disk, random 1 MB direct reads | ~2.4-3.6 GB/s burst | `build/diskbw` |
+
+The disk figure is a burst rate. After a few hundred GB of reads in one session, this sandbox's
+disk dropped to 1-2 MB/s. Any design that streams experts must be sized against the sustained rate
+of the real target device, not a burst benchmark.
 
 ## The model: per-token traffic for Flint (`UD-IQ3_XXS`, 14.5 GB)
 
@@ -85,6 +89,12 @@ Swapping even 5% of expert picks changes about 1 in 7 top predictions: Flint's 2
 experts are not interchangeable. Perplexity on this small sample did not get worse (biasing toward
 recently used experts may act as a topical prior), but the behavior shift is large, so steering
 stays off by default until it is checked on real coding tasks.
+
+Worker B's trace analysis (llama.cpp, 3 workloads x 1,299 decode steps, `traces/README.md`) adds
+two things: prefetch adds total disk traffic (at a 20% cache, top-6 prefetch raises reads from
+~130 to ~175 MB/token; top-12 to ~335 MB/token), so prefetch depth should shrink once compute stops
+being the bottleneck. And a decayed-frequency (EMA 0.98) policy beats LRU by 3-8 points at 10-30%
+cache, with ~20 points of headroom to the offline optimum.
 
 ## Where the time goes now (4 GB, prefetch 10, 9.8 tok/s = 102 ms/token)
 

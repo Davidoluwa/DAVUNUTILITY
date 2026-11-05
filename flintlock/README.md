@@ -13,7 +13,12 @@ See `docs/DESIGN.md` for measurements and the feasibility analysis of the v1 tar
 
 - Kernels for q6_K, iq2_s, iq3_xxs and bf16 match a scalar reference to 1e-8.
 - Tokenizer matches the original Hugging Face tokenizer on 95k tokens of code, JSON, Markdown,
-  CJK and emoji. llama.cpp does not split camelCase the way the original does; we do.
+  CJK and emoji, and on all 37 strings in `testdata/tokenization.json` (worker B's set). llama.cpp
+  pre-splits mixed case differently, which changes token ids only for rare non-ASCII cases such as
+  Cyrillic camelCase (B fuzzed 31.8M tokens: 2 strings differ); we match the original there too.
+- `build/check_ref -m MODEL REF.txt` compares greedy output and top-10 logits with llama.cpp
+  references in `testdata/` (convert with `tools/ref_to_txt.py`). Not yet run to completion: this
+  session's disk allowance ran out (see coord/log-a.md).
 
 ## Build and run
 

@@ -1,0 +1,137 @@
+<|system|>You are a helpful assistant.<|user|>Here is `scheduler.py`:
+
+```python
+"""Small job scheduler with retries, priorities and a persistent log."""
+
+import heapq
+import json
+import time
+from dataclasses import dataclass, field
+from typing import Callable, Dict, List, Optional
+
+
+@dataclass(order=True)
+class Job:
+    priority: int
+    created_at: float
+    name: str = field(compare=False)
+    fn: Callable[[], object] = field(compare=False, repr=False)
+    max_retries: int = field(default=3, compare=False)
+    attempts: int = field(default=0, compare=False)
+    depends_on: List[str] = field(default_factory=list, compare=False)
+
+
+class JobLog:
+    def __init__(self, path: str):
+        self.path = path
+        self.entries: List[dict] = []
+
+    def record(self, job: Job, status: str, detail: str = "") -> None:
+        self.entries.append({
+            "job": job.name,
+            "status": status,
+            "attempt": job.attempts,
+            "detail": detail,
+            "ts": time.time(),
+        })
+
+    def flush(self) -> None:
+        with open(self.path, "w") as f:
+            for e in self.entries:
+                f.write(json.dumps(e))
+        self.entries = []
+
+    def load(self) -> List[dict]:
+        out = []
+        with open(self.path) as f:
+            for line in f:
+                out.append(json.loads(line))
+        return out
+
+
+class Scheduler:
+    def __init__(self, log: JobLog, backoff_s: float = 0.5):
+        self.queue: List[Job] = []
+        self.log = log
+        self.backoff_s = backoff_s
+        self.done: Dict[str, object] = {}
+        self.failed: Dict[str, str] = {}
+        self.known: Dict[str, Job] = {}
+
+    def submit(self, name: str, fn: Callable[[], object], priority: int = 10,
+               depends_on: Optional[List[str]] = None, max_retries: int = 3) -> None:
+        if name in self.known:
+            raise ValueError(f"duplicate job {name}")
+        job = Job(priority, time.time(), name, fn, max_retries, 0, depends_on or [])
+        self.known[name] = job
+        heapq.heappush(self.queue, job)
+
+    def _ready(self, job: Job) -> bool:
+        return all(d in self.done for d in job.depends_on)
+
+    def _blocked_forever(self, job: Job) -> bool:
+        return any(d in self.failed for d in job.depends_on)
+
+    def run(self) -> None:
+        deferred: List[Job] = []
+        while self.queue:
+            job = heapq.heappop(self.queue)
+            if self._blocked_forever(job):
+                self.failed[job.name] = "dependency failed"
+                self.log.record(job, "skipped", "dependency failed")
+                continue
+            if not self._ready(job):
+                deferred.append(job)
+                continue
+            job.attempts += 1
+            try:
+                result = job.fn()
+            except Exception as exc:
+                self.log.record(job, "error", repr(exc))
+                if job.attempts < job.max_retries:
+                    time.sleep(self.backoff_s * 2 ** job.attempts)
+                    heapq.heappush(self.queue, job)
+                else:
+                    self.failed[job.name] = repr(exc)
+                continue
+            self.done[job.name] = result
+            self.log.record(job, "ok")
+            for d in deferred:
+                heapq.heappush(self.queue, d)
+        self.log.flush()
+
+    def summary(self) -> str:
+        lines = []
+        for name in self.known:
+            if name in self.done:
+                lines.append(f"{name}: ok")
+            elif name in self.failed:
+                lines.append(f"{name}: FAILED ({self.failed[name]})")
+            else:
+                lines.append(f"{name}: never ran")
+        return "\n".join(lines)
+
+
+def demo() -> None:
+    calls = {"flaky": 0}
+
+    def flaky():
+        calls["flaky"] += 1
+        if calls["flaky"] < 3:
+            raise RuntimeError("transient")
+        return "ok after retries"
+
+    s = Scheduler(JobLog("/tmp/jobs.log"), backoff_s=0.01)
+    s.submit("fetch", lambda: "data", priority=1)
+    s.submit("parse", lambda: "parsed", priority=2, depends_on=["fetch"])
+    s.submit("flaky", flaky, priority=5, max_retries=3)
+    s.submit("report", lambda: "report", priority=0, depends_on=["parse", "flaky"])
+    s.run()
+    print(s.summary())
+
+
+if __name__ == "__main__":
+    demo()
+```
+
+This scheduler has several bugs. Find all of them, explain each one briefly, then give the complete corrected file. Also add a `cancel(name)` method that removes a pending job and marks every job that depends on it as skipped, and make `run()` report jobs whose dependencies never completed. Output the full file, not a diff.<|assistant|><think></think>
