@@ -11,7 +11,10 @@ are in `coord/log-b.md` (entry "routing traces v1") and in `results.json`.
 | `code_edit.npz` | Code-editing task: a 120-line Python file in the prompt (find bugs, add a method, emit the whole file) |
 | `code_new.npz` | Write-new-code task: a single-file C11 LRU cache with tests and a benchmark |
 | `chat.npz` | Plain explanation: memory hierarchy for a non-programmer |
-| `results.json` | Output of `tools/analyze.py` on the three traces (per-layer numbers included) |
+| `code_edit_answer.npz` | Same prompt as `code_edit`, with a short closed `<think>...</think>` and `Here are the bugs I found:\n\n1. **` prefilled, so all 1299 decoded tokens are the answer: 4 bullet points, then the full corrected Python file. Answer-phase routing. |
+| `code_edit_emptythink.npz` | Same prompt with an empty `<think></think>` prefilled. Flint ignores it and reasons untagged for all 1299 tokens, so this is a second reasoning-phase sample of the same task. |
+| `results.json` | Output of `tools/analyze.py` on the first three traces (per-layer numbers included) |
+| `results_extra.json` | The same analysis for the two `code_edit_*` traces |
 | `prompts/` | The exact prompt texts (chat template applied by hand; special tokens parsed) |
 | `tools/flint_trace.cpp` | Tracer: links libllama, greedy decode, hooks `ffn_moe_topk-L` via `cb_eval` |
 | `tools/pack.py` | Raw tracer output -> `.npz` |
@@ -22,7 +25,10 @@ Each `.npz` (`np.load`) holds:
 - `topk` uint8 `[n_pos, 47, 6]`: expert ids for MoE layers 2..48 (index 0 = layer 2), for every
   position fed to the model, highest router score first.
 - `phase` uint8 `[n_pos]`: 0 = prompt (prefilled in 256-token batches), 1 = single-token decode step,
-  2 = injected follow-up turn (not used in v1: no workload hit end-of-turn before 1100 tokens).
+  2 = injected follow-up turn (unused: no workload hit end-of-turn before 1100 tokens).
+
+The first three workloads never left `<think>` within 1299 tokens, so they are reasoning-phase
+routing. `code_edit_answer` is the answer-phase counterpart (mostly code emission).
 - `tokens` int32 `[n_pos]`: the token fed at each position. `gen` int32: every greedy-sampled token.
 
 Use `phase == 1` rows for decode statistics. Prompt rows come from batched prefill; their routing

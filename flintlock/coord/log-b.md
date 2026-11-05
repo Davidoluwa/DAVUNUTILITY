@@ -124,3 +124,51 @@ Findings:
 Asks for the other worker: if you want activations for layers 0-1, attention outputs, or a
 different decode step, say which and I'll dump them.
 Next: answer-phase routing trace (running), reproduce membw/diskbw/inspect, Task 1 paper notes.
+
+## 2026-11-05 12:50 UTC: paper notes, answer-phase traces, my benchmark numbers
+Done:
+- `docs/papers.md` (Task 1): PSR, MoE-CORE, SpecPrefetch, Pre-gated MoE, AcceptMoE, EVICT, S2-MoE,
+  EcoSpec, expert coactivation, Cascade, Quest, KIVI, bitnet.cpp x2, QTIP, AMX leads (KTransformers,
+  SGLang Xeon), and short v2 notes (Gated DeltaNet, DSA, MTP, Gemma 3n PLE). The top of the file
+  has a 6-point "what flintlock should take" list tied to our traces.
+- Two more traces of the code_edit prompt: `traces/code_edit_answer.npz` (short closed think plus
+  the answer start prefilled; all 1299 tokens are answer: 4 bullets, then the full Python file) and
+  `traces/code_edit_emptythink.npz` (empty `<think></think>` prefilled; Flint ignores it and
+  reasons untagged, so it is a second reasoning sample). Numbers in `traces/results_extra.json`.
+Findings:
+- **Answer phase (writing code) is the hard case.** Reasoning / answer on the same prompt:
+
+  | Metric | code_edit (think) | code_edit_answer |
+  | --- | --- | --- |
+  | LRU hit, 20% cache | 0.57 | 0.47 |
+  | LRU hit, 30% cache | 0.71 | 0.62 |
+  | EMA-0.98 hit, 20% cache | 0.63 | 0.55 |
+  | Disk MB/token, LRU 20% | 129 | 159 |
+  | 20% cache + top-6 prefetch: demand hit / disk MB/token | 0.86 / 173 | 0.80 / 223 |
+  | Next-layer prefetch recall@6 / @12 | 0.77 / 0.92 | 0.70 / 0.87 |
+  | Expert union over 8 tokens | 34.8 | 37.4 |
+  | Top-10% expert share | 0.42 | 0.34 |
+
+  A hot set learned on the reasoning trace of the *same task* covers only 0.18 of the answer
+  phase's selections (uniform 0.10). Reasoning about code and writing it use different experts, so
+  expect a miss burst after `</think>`. Plan cache sizes for the answer phase.
+- The empty-think run matches code_edit closely (LRU 20%: 0.562 vs 0.572; recall@6 0.756 vs 0.765),
+  so the trace statistics are stable across runs of a task.
+- My machine (same 4 vCPU Xeon @ 2.1 GHz type, 15 GB), A's tools, unmodified:
+  - `membw`, 4 threads: 2 GB set 42.8 / 47.7 / 49.7 GB/s (3 runs); 512 MB 39.7-44.7; 128 MB
+    79.1-89.3 GB/s. Matches A.
+  - `diskbw` on the GGUF, O_DIRECT, 3 runs: random 1 MB reads 1.00-1.74 GB/s at qd 1 and
+    1.07-2.37 GB/s at qd 4; random 256 KB 0.49-1.71 GB/s at qd 1; sequential 4 MB 1.64-2.11 GB/s.
+    The first run was the slowest. **This is 1.5-3x below A's 2.4-3.6 GB/s and varies 2-3x between
+    runs on the same VM** (virtio disk). Don't size the design for 3 GB/s. With `inspect ... 45 1.5`
+    the bandwidth ceilings are 7.4 tok/s at 50% expert hit, 13.1 at 80%, 17.7 at 90%.
+  - `inspect`: identical to A's numbers (1668.2 MB/token; 1.37 GB always active; routed experts
+    302.6 MB/token; attention projections alone 758.7 MB/token).
+- Layout note for the expert store: in the GGUF one expert is 3 separate slices (gate 335,872 B and
+  up 335,872 B, iq2_s; down 401,408 B, iq3_xxs) in 3 different tensors. Loading one expert is
+  therefore 3 random reads of ~330-400 KB, and small reads were the slowest case above (0.49 GB/s at
+  256 KB qd 1 in the slow run). Repacking each (layer, expert) into one contiguous 1.07 MB blob
+  (and maybe 4 KB-aligned for O_DIRECT) should help.
+Asks for the other worker: none. All three tasks have a first version; tell me what to deepen.
+Next: idle unless pinged. Candidates: simulate a specific cache design you pick (per-layer sizes,
+policy, prefetch threshold), longer or agentic (tool-call) traces, more AMX/AVX-512 kernel reading.
