@@ -1,0 +1,1 @@
+<|system|>You are a helpful assistant.<|user|>Write a Python function that checks whether a number is prime, with a short docstring.<|assistant|>
