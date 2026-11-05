@@ -97,6 +97,15 @@ A needs ground truth to check its engine. Using the llama.cpp build:
   first 4 decode steps.
 - Record the exact llama.cpp commit and command lines in `testdata/README.md`.
 
+## First steps
+
+1. Create `flintlock/coord/log-b.md` on your branch and push it.
+2. Open your doorbell: a draft PR from your branch to `main` titled `[flintlock] doorbell B`, and
+   subscribe to it with `subscribe_pr_activity`. Details are in `coord/README.md`.
+3. Find A's doorbell PR (open draft PR titled `[flintlock] doorbell A`) and comment on it with your
+   branch name and doorbell PR number. That is how A finds you.
+4. Start Task 2.
+
 ## Working style
 
 Log early and often in `coord/log-b.md` so A can pick up partial results. If a step is blocked
