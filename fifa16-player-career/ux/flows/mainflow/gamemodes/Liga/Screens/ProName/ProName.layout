@@ -1,0 +1,1307 @@
+{
+  "commonName": "Panel",
+  "name": "rootContainer",
+  "alignV": "CENTER",
+  "alignH": "CENTER",
+  "bindings": [
+    {
+      "binding": "BND_SCREEN_WIDTH",
+      "property": "width"
+    },
+    {
+      "binding": "BND_SCREEN_HEIGHT",
+      "property": "height"
+    }
+  ],
+  "animationScripts": [
+    {
+      "name": "show",
+      "script": [
+        {
+          "anim": "SCREEN_SHOW"
+        }
+      ]
+    },
+    {
+      "name": "hide",
+      "script": [
+        {
+          "anim": "SIMPLE_SCREEN_HIDE"
+        }
+      ]
+    }
+  ],
+  "children": [
+    {
+      "commonName": "GenericButton",
+      "name": "prism_blocker",
+      "alignH": "FILL",
+      "alignV": "FILL",
+      "visible": false,
+      "alpha": 0,
+      "clickAction": "act_prism_noop",
+      "bindings": [
+        {
+          "binding": "bnd_prism_native",
+          "property": "visible"
+        }
+      ]
+    },
+    {
+      "commonName": "Panel",
+      "name": "prism_zinc",
+      "alignH": "FILL",
+      "alignV": "FILL",
+      "bindings": [
+        {
+          "binding": "bnd_prism_zinc",
+          "property": "visible"
+        }
+      ],
+      "children": [
+        {
+          "commonName": "Asset",
+          "alignV": "FILL",
+          "alignH": "FILL",
+          "type": "$Bg_Fc26"
+        },
+        {
+          "commonName": "Panel",
+          "name": "UIFrame",
+          "alignV": "CENTER",
+          "alignH": "CENTER",
+          "marginTop": -70,
+          "marginLeft": 0,
+          "width": 650,
+          "height": 430,
+          "children": [
+            {
+              "commonName": "Rectangle",
+              "alignV": "FILL",
+              "alignH": "FILL",
+              "cornerRaduis": 12,
+              "color": "0x0D0D0D",
+              "alpha": 1
+            },
+            {
+              "commonName": "Rectangle",
+              "alignV": "TOP",
+              "alignH": "FILL",
+              "marginTop": 47,
+              "height": 1,
+              "color": "0xFFFFFF",
+              "alpha": 0
+            },
+            {
+              "commonName": "Label",
+              "alignV": "TOP",
+              "alignH": "CENTER",
+              "marginTop": 233,
+              "marginLeft": -700,
+              "fontSize": 20,
+              "fontFace": "$CruyffSans-Bold",
+              "fontColor": "$COLOR_WHITE",
+              "bold": false,
+              "bindings": [
+                {
+                  "binding": "bnd_team_label",
+                  "property": "text"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "commonName": "Panel",
+          "name": "UIFrame",
+          "alignV": "CENTER",
+          "alignH": "CENTER",
+          "marginTop": -130,
+          "marginLeft": -270,
+          "width": 50,
+          "height": 50,
+          "children": [
+            {
+              "commonName": "Rectangle",
+              "alignV": "FILL",
+              "alignH": "FILL",
+              "cornerRaduis": 15,
+              "color": "0x1C1C1C",
+              "alpha": 1
+            },
+            {
+              "commonName": "Label",
+              "alignV": "CENTER",
+              "alignH": "CENTER",
+              "fontSize": 25,
+              "fontColor": "$COLOR_WHITE",
+              "fontFace": "$CruyffSans-Bold",
+              "styles": [
+                "TF_MATCH_REVEAL_TEAM_NAME"
+              ],
+              "text": "q"
+            },
+            {
+              "commonName": "GenericButton",
+              "alignV": "CENTER",
+              "clickAction": "act_q"
+            }
+          ]
+        },
+        {
+          "commonName": "Panel",
+          "name": "UIFrame",
+          "alignV": "CENTER",
+          "alignH": "CENTER",
+          "marginTop": -130,
+          "marginLeft": -210,
+          "width": 50,
+          "height": 50,
+          "children": [
+            {
+              "commonName": "Rectangle",
+              "alignV": "FILL",
+              "alignH": "FILL",
+              "cornerRaduis": 15,
+              "color": "0x1C1C1C",
+              "alpha": 1
+            },
+            {
+              "commonName": "Label",
+              "alignV": "CENTER",
+              "alignH": "CENTER",
+              "fontSize": 25,
+              "fontColor": "$COLOR_WHITE",
+              "styles": [
+                "TF_MATCH_REVEAL_TEAM_NAME"
+              ],
+              "text": "w"
+            },
+            {
+              "commonName": "GenericButton",
+              "alignV": "CENTER",
+              "clickAction": "act_w"
+            }
+          ]
+        },
+        {
+          "commonName": "Panel",
+          "name": "UIFrame",
+          "alignV": "CENTER",
+          "alignH": "CENTER",
+          "marginTop": -130,
+          "marginLeft": -150,
+          "width": 50,
+          "height": 50,
+          "children": [
+            {
+              "commonName": "Rectangle",
+              "alignV": "FILL",
+              "alignH": "FILL",
+              "cornerRaduis": 15,
+              "color": "0x1C1C1C",
+              "alpha": 1
+            },
+            {
+              "commonName": "Label",
+              "alignV": "CENTER",
+              "alignH": "CENTER",
+              "fontSize": 25,
+              "fontColor": "$COLOR_WHITE",
+              "styles": [
+                "TF_MATCH_REVEAL_TEAM_NAME"
+              ],
+              "text": "e"
+            },
+            {
+              "commonName": "GenericButton",
+              "alignV": "CENTER",
+              "clickAction": "act_e"
+            }
+          ]
+        },
+        {
+          "commonName": "Panel",
+          "name": "UIFrame",
+          "alignV": "CENTER",
+          "alignH": "CENTER",
+          "marginTop": -130,
+          "marginLeft": -90,
+          "width": 50,
+          "height": 50,
+          "children": [
+            {
+              "commonName": "Rectangle",
+              "alignV": "FILL",
+              "alignH": "FILL",
+              "cornerRaduis": 15,
+              "color": "0x1C1C1C",
+              "alpha": 1
+            },
+            {
+              "commonName": "Label",
+              "alignV": "CENTER",
+              "alignH": "CENTER",
+              "fontSize": 25,
+              "fontColor": "$COLOR_WHITE",
+              "styles": [
+                "TF_MATCH_REVEAL_TEAM_NAME"
+              ],
+              "text": "r"
+            },
+            {
+              "commonName": "GenericButton",
+              "alignV": "CENTER",
+              "clickAction": "act_r"
+            }
+          ]
+        },
+        {
+          "commonName": "Panel",
+          "name": "UIFrame",
+          "alignV": "CENTER",
+          "alignH": "CENTER",
+          "marginTop": -130,
+          "marginLeft": -30,
+          "width": 50,
+          "height": 50,
+          "children": [
+            {
+              "commonName": "Rectangle",
+              "alignV": "FILL",
+              "alignH": "FILL",
+              "cornerRaduis": 15,
+              "color": "0x1C1C1C",
+              "alpha": 1
+            },
+            {
+              "commonName": "Label",
+              "alignV": "CENTER",
+              "alignH": "CENTER",
+              "fontSize": 25,
+              "fontColor": "$COLOR_WHITE",
+              "styles": [
+                "TF_MATCH_REVEAL_TEAM_NAME"
+              ],
+              "text": "t"
+            },
+            {
+              "commonName": "GenericButton",
+              "alignV": "CENTER",
+              "clickAction": "act_t"
+            }
+          ]
+        },
+        {
+          "commonName": "Panel",
+          "name": "UIFrame",
+          "alignV": "CENTER",
+          "alignH": "CENTER",
+          "marginTop": -130,
+          "marginLeft": 30,
+          "width": 50,
+          "height": 50,
+          "children": [
+            {
+              "commonName": "Rectangle",
+              "alignV": "FILL",
+              "alignH": "FILL",
+              "cornerRaduis": 15,
+              "color": "0x1C1C1C",
+              "alpha": 1
+            },
+            {
+              "commonName": "Label",
+              "alignV": "CENTER",
+              "alignH": "CENTER",
+              "fontSize": 25,
+              "fontColor": "$COLOR_WHITE",
+              "styles": [
+                "TF_MATCH_REVEAL_TEAM_NAME"
+              ],
+              "text": "y"
+            },
+            {
+              "commonName": "GenericButton",
+              "alignV": "CENTER",
+              "clickAction": "act_y"
+            }
+          ]
+        },
+        {
+          "commonName": "Panel",
+          "name": "UIFrame",
+          "alignV": "CENTER",
+          "alignH": "CENTER",
+          "marginTop": -130,
+          "marginLeft": 90,
+          "width": 50,
+          "height": 50,
+          "children": [
+            {
+              "commonName": "Rectangle",
+              "alignV": "FILL",
+              "alignH": "FILL",
+              "cornerRaduis": 15,
+              "color": "0x1C1C1C",
+              "alpha": 1
+            },
+            {
+              "commonName": "Label",
+              "alignV": "CENTER",
+              "alignH": "CENTER",
+              "fontSize": 25,
+              "fontColor": "$COLOR_WHITE",
+              "styles": [
+                "TF_MATCH_REVEAL_TEAM_NAME"
+              ],
+              "text": "u"
+            },
+            {
+              "commonName": "GenericButton",
+              "alignV": "CENTER",
+              "clickAction": "act_u"
+            }
+          ]
+        },
+        {
+          "commonName": "Panel",
+          "name": "UIFrame",
+          "alignV": "CENTER",
+          "alignH": "CENTER",
+          "marginTop": -130,
+          "marginLeft": 150,
+          "width": 50,
+          "height": 50,
+          "children": [
+            {
+              "commonName": "Rectangle",
+              "alignV": "FILL",
+              "alignH": "FILL",
+              "cornerRaduis": 15,
+              "color": "0x1C1C1C",
+              "alpha": 1
+            },
+            {
+              "commonName": "Label",
+              "alignV": "CENTER",
+              "alignH": "CENTER",
+              "fontSize": 25,
+              "fontColor": "$COLOR_WHITE",
+              "styles": [
+                "TF_MATCH_REVEAL_TEAM_NAME"
+              ],
+              "text": "i"
+            },
+            {
+              "commonName": "GenericButton",
+              "alignV": "CENTER",
+              "clickAction": "act_i"
+            }
+          ]
+        },
+        {
+          "commonName": "Panel",
+          "name": "UIFrame",
+          "alignV": "CENTER",
+          "alignH": "CENTER",
+          "marginTop": -130,
+          "marginLeft": 210,
+          "width": 50,
+          "height": 50,
+          "children": [
+            {
+              "commonName": "Rectangle",
+              "alignV": "FILL",
+              "alignH": "FILL",
+              "cornerRaduis": 15,
+              "color": "0x1C1C1C",
+              "alpha": 1
+            },
+            {
+              "commonName": "Label",
+              "alignV": "CENTER",
+              "alignH": "CENTER",
+              "fontSize": 25,
+              "fontColor": "$COLOR_WHITE",
+              "styles": [
+                "TF_MATCH_REVEAL_TEAM_NAME"
+              ],
+              "text": "o"
+            },
+            {
+              "commonName": "GenericButton",
+              "alignV": "CENTER",
+              "clickAction": "act_o"
+            }
+          ]
+        },
+        {
+          "commonName": "Panel",
+          "name": "UIFrame",
+          "alignV": "CENTER",
+          "alignH": "CENTER",
+          "marginTop": -130,
+          "marginLeft": 270,
+          "width": 50,
+          "height": 50,
+          "children": [
+            {
+              "commonName": "Rectangle",
+              "alignV": "FILL",
+              "alignH": "FILL",
+              "cornerRaduis": 15,
+              "color": "0x1C1C1C",
+              "alpha": 1
+            },
+            {
+              "commonName": "Label",
+              "alignV": "CENTER",
+              "alignH": "CENTER",
+              "fontSize": 25,
+              "fontColor": "$COLOR_WHITE",
+              "styles": [
+                "TF_MATCH_REVEAL_TEAM_NAME"
+              ],
+              "text": "p"
+            },
+            {
+              "commonName": "GenericButton",
+              "alignV": "CENTER",
+              "clickAction": "act_p"
+            }
+          ]
+        },
+        {
+          "commonName": "Panel",
+          "name": "UIFrame",
+          "alignV": "CENTER",
+          "alignH": "CENTER",
+          "marginTop": -50,
+          "marginLeft": -250,
+          "width": 50,
+          "height": 50,
+          "children": [
+            {
+              "commonName": "Rectangle",
+              "alignV": "FILL",
+              "alignH": "FILL",
+              "cornerRaduis": 15,
+              "color": "0x1C1C1C",
+              "alpha": 1
+            },
+            {
+              "commonName": "Label",
+              "alignV": "CENTER",
+              "alignH": "CENTER",
+              "fontSize": 25,
+              "fontColor": "$COLOR_WHITE",
+              "styles": [
+                "TF_MATCH_REVEAL_TEAM_NAME"
+              ],
+              "text": "a"
+            },
+            {
+              "commonName": "GenericButton",
+              "alignV": "CENTER",
+              "clickAction": "act_a"
+            }
+          ]
+        },
+        {
+          "commonName": "Panel",
+          "name": "UIFrame",
+          "alignV": "CENTER",
+          "alignH": "CENTER",
+          "marginTop": -50,
+          "marginLeft": -190,
+          "width": 50,
+          "height": 50,
+          "children": [
+            {
+              "commonName": "Rectangle",
+              "alignV": "FILL",
+              "alignH": "FILL",
+              "cornerRaduis": 15,
+              "color": "0x1C1C1C",
+              "alpha": 1
+            },
+            {
+              "commonName": "Label",
+              "alignV": "CENTER",
+              "alignH": "CENTER",
+              "fontSize": 25,
+              "fontColor": "$COLOR_WHITE",
+              "styles": [
+                "TF_MATCH_REVEAL_TEAM_NAME"
+              ],
+              "text": "s"
+            },
+            {
+              "commonName": "GenericButton",
+              "alignV": "CENTER",
+              "clickAction": "act_s"
+            }
+          ]
+        },
+        {
+          "commonName": "Panel",
+          "name": "UIFrame",
+          "alignV": "CENTER",
+          "alignH": "CENTER",
+          "marginTop": -50,
+          "marginLeft": -130,
+          "width": 50,
+          "height": 50,
+          "children": [
+            {
+              "commonName": "Rectangle",
+              "alignV": "FILL",
+              "alignH": "FILL",
+              "cornerRaduis": 15,
+              "color": "0x1C1C1C",
+              "alpha": 1
+            },
+            {
+              "commonName": "Label",
+              "alignV": "CENTER",
+              "alignH": "CENTER",
+              "fontSize": 25,
+              "fontColor": "$COLOR_WHITE",
+              "styles": [
+                "TF_MATCH_REVEAL_TEAM_NAME"
+              ],
+              "text": "d"
+            },
+            {
+              "commonName": "GenericButton",
+              "alignV": "CENTER",
+              "clickAction": "act_d"
+            }
+          ]
+        },
+        {
+          "commonName": "Panel",
+          "name": "UIFrame",
+          "alignV": "CENTER",
+          "alignH": "CENTER",
+          "marginTop": -50,
+          "marginLeft": -70,
+          "width": 50,
+          "height": 50,
+          "children": [
+            {
+              "commonName": "Rectangle",
+              "alignV": "FILL",
+              "alignH": "FILL",
+              "cornerRaduis": 15,
+              "color": "0x1C1C1C",
+              "alpha": 1
+            },
+            {
+              "commonName": "Label",
+              "alignV": "CENTER",
+              "alignH": "CENTER",
+              "fontSize": 25,
+              "fontColor": "$COLOR_WHITE",
+              "styles": [
+                "TF_MATCH_REVEAL_TEAM_NAME"
+              ],
+              "text": "f"
+            },
+            {
+              "commonName": "GenericButton",
+              "alignV": "CENTER",
+              "clickAction": "act_f"
+            }
+          ]
+        },
+        {
+          "commonName": "Panel",
+          "name": "UIFrame",
+          "alignV": "CENTER",
+          "alignH": "CENTER",
+          "marginTop": -50,
+          "marginLeft": -10,
+          "width": 50,
+          "height": 50,
+          "children": [
+            {
+              "commonName": "Rectangle",
+              "alignV": "FILL",
+              "alignH": "FILL",
+              "cornerRaduis": 15,
+              "color": "0x1C1C1C",
+              "alpha": 1
+            },
+            {
+              "commonName": "Label",
+              "alignV": "CENTER",
+              "alignH": "CENTER",
+              "fontSize": 25,
+              "fontColor": "$COLOR_WHITE",
+              "styles": [
+                "TF_MATCH_REVEAL_TEAM_NAME"
+              ],
+              "text": "g"
+            },
+            {
+              "commonName": "GenericButton",
+              "alignV": "CENTER",
+              "clickAction": "act_g"
+            }
+          ]
+        },
+        {
+          "commonName": "Panel",
+          "name": "UIFrame",
+          "alignV": "CENTER",
+          "alignH": "CENTER",
+          "marginTop": -50,
+          "marginLeft": 50,
+          "width": 50,
+          "height": 50,
+          "children": [
+            {
+              "commonName": "Rectangle",
+              "alignV": "FILL",
+              "alignH": "FILL",
+              "cornerRaduis": 15,
+              "color": "0x1C1C1C",
+              "alpha": 1
+            },
+            {
+              "commonName": "Label",
+              "alignV": "CENTER",
+              "alignH": "CENTER",
+              "fontSize": 25,
+              "fontColor": "$COLOR_WHITE",
+              "styles": [
+                "TF_MATCH_REVEAL_TEAM_NAME"
+              ],
+              "text": "h"
+            },
+            {
+              "commonName": "GenericButton",
+              "alignV": "CENTER",
+              "clickAction": "act_h"
+            }
+          ]
+        },
+        {
+          "commonName": "Panel",
+          "name": "UIFrame",
+          "alignV": "CENTER",
+          "alignH": "CENTER",
+          "marginTop": -50,
+          "marginLeft": 110,
+          "width": 50,
+          "height": 50,
+          "children": [
+            {
+              "commonName": "Rectangle",
+              "alignV": "FILL",
+              "alignH": "FILL",
+              "cornerRaduis": 15,
+              "color": "0x1C1C1C",
+              "alpha": 1
+            },
+            {
+              "commonName": "Label",
+              "alignV": "CENTER",
+              "alignH": "CENTER",
+              "fontSize": 25,
+              "fontColor": "$COLOR_WHITE",
+              "styles": [
+                "TF_MATCH_REVEAL_TEAM_NAME"
+              ],
+              "text": "j"
+            },
+            {
+              "commonName": "GenericButton",
+              "alignV": "CENTER",
+              "clickAction": "act_j"
+            }
+          ]
+        },
+        {
+          "commonName": "Panel",
+          "name": "UIFrame",
+          "alignV": "CENTER",
+          "alignH": "CENTER",
+          "marginTop": -50,
+          "marginLeft": 170,
+          "width": 50,
+          "height": 50,
+          "children": [
+            {
+              "commonName": "Rectangle",
+              "alignV": "FILL",
+              "alignH": "FILL",
+              "cornerRaduis": 15,
+              "color": "0x1C1C1C",
+              "alpha": 1
+            },
+            {
+              "commonName": "Label",
+              "alignV": "CENTER",
+              "alignH": "CENTER",
+              "fontSize": 25,
+              "fontColor": "$COLOR_WHITE",
+              "styles": [
+                "TF_MATCH_REVEAL_TEAM_NAME"
+              ],
+              "text": "k"
+            },
+            {
+              "commonName": "GenericButton",
+              "alignV": "CENTER",
+              "clickAction": "act_k"
+            }
+          ]
+        },
+        {
+          "commonName": "Panel",
+          "name": "UIFrame",
+          "alignV": "CENTER",
+          "alignH": "CENTER",
+          "marginTop": -50,
+          "marginLeft": 230,
+          "width": 50,
+          "height": 50,
+          "children": [
+            {
+              "commonName": "Rectangle",
+              "alignV": "FILL",
+              "alignH": "FILL",
+              "cornerRaduis": 15,
+              "color": "0x1C1C1C",
+              "alpha": 1
+            },
+            {
+              "commonName": "Label",
+              "alignV": "CENTER",
+              "alignH": "CENTER",
+              "fontSize": 25,
+              "fontColor": "$COLOR_WHITE",
+              "styles": [
+                "TF_MATCH_REVEAL_TEAM_NAME"
+              ],
+              "text": "l"
+            },
+            {
+              "commonName": "GenericButton",
+              "alignV": "CENTER",
+              "clickAction": "act_l"
+            }
+          ]
+        },
+        {
+          "commonName": "Panel",
+          "name": "UIFrame",
+          "alignV": "CENTER",
+          "alignH": "CENTER",
+          "marginTop": 105,
+          "marginLeft": -280,
+          "width": 50,
+          "height": 50,
+          "children": [
+            {
+              "commonName": "Rectangle",
+              "alignV": "FILL",
+              "alignH": "FILL",
+              "cornerRaduis": 15,
+              "color": "0x1C1C1C",
+              "alpha": 1
+            },
+            {
+              "commonName": "Label",
+              "alignV": "CENTER",
+              "alignH": "CENTER",
+              "fontSize": 25,
+              "fontColor": "$COLOR_WHITE",
+              "styles": [
+                "TF_MATCH_REVEAL_TEAM_NAME"
+              ],
+              "text": ">"
+            },
+            {
+              "commonName": "GenericButton",
+              "alignV": "CENTER",
+              "clickAction": "act_delete"
+            }
+          ]
+        },
+        {
+          "commonName": "Panel",
+          "name": "UIFrame",
+          "alignV": "CENTER",
+          "alignH": "CENTER",
+          "marginTop": 30,
+          "marginLeft": -190,
+          "width": 50,
+          "height": 50,
+          "children": [
+            {
+              "commonName": "Rectangle",
+              "alignV": "FILL",
+              "alignH": "FILL",
+              "cornerRaduis": 15,
+              "color": "0x1C1C1C",
+              "alpha": 1
+            },
+            {
+              "commonName": "Label",
+              "alignV": "CENTER",
+              "alignH": "CENTER",
+              "fontSize": 25,
+              "fontColor": "$COLOR_WHITE",
+              "styles": [
+                "TF_MATCH_REVEAL_TEAM_NAME"
+              ],
+              "text": "z"
+            },
+            {
+              "commonName": "GenericButton",
+              "alignV": "CENTER",
+              "clickAction": "act_z"
+            }
+          ]
+        },
+        {
+          "commonName": "Panel",
+          "name": "UIFrame",
+          "alignV": "CENTER",
+          "alignH": "CENTER",
+          "marginTop": 30,
+          "marginLeft": -130,
+          "width": 50,
+          "height": 50,
+          "children": [
+            {
+              "commonName": "Rectangle",
+              "alignV": "FILL",
+              "alignH": "FILL",
+              "cornerRaduis": 15,
+              "color": "0x1C1C1C",
+              "alpha": 1
+            },
+            {
+              "commonName": "Label",
+              "alignV": "CENTER",
+              "alignH": "CENTER",
+              "fontSize": 25,
+              "fontColor": "$COLOR_WHITE",
+              "styles": [
+                "TF_MATCH_REVEAL_TEAM_NAME"
+              ],
+              "text": "x"
+            },
+            {
+              "commonName": "GenericButton",
+              "alignV": "CENTER",
+              "clickAction": "act_x"
+            }
+          ]
+        },
+        {
+          "commonName": "Panel",
+          "name": "UIFrame",
+          "alignV": "CENTER",
+          "alignH": "CENTER",
+          "marginTop": 30,
+          "marginLeft": -70,
+          "width": 50,
+          "height": 50,
+          "children": [
+            {
+              "commonName": "Rectangle",
+              "alignV": "FILL",
+              "alignH": "FILL",
+              "cornerRaduis": 15,
+              "color": "0x1C1C1C",
+              "alpha": 1
+            },
+            {
+              "commonName": "Label",
+              "alignV": "CENTER",
+              "alignH": "CENTER",
+              "fontSize": 25,
+              "fontColor": "$COLOR_WHITE",
+              "styles": [
+                "TF_MATCH_REVEAL_TEAM_NAME"
+              ],
+              "text": "c"
+            },
+            {
+              "commonName": "GenericButton",
+              "alignV": "CENTER",
+              "clickAction": "act_c"
+            }
+          ]
+        },
+        {
+          "commonName": "Panel",
+          "name": "UIFrame",
+          "alignV": "CENTER",
+          "alignH": "CENTER",
+          "marginTop": 30,
+          "marginLeft": -10,
+          "width": 50,
+          "height": 50,
+          "children": [
+            {
+              "commonName": "Rectangle",
+              "alignV": "FILL",
+              "alignH": "FILL",
+              "cornerRaduis": 15,
+              "color": "0x1C1C1C",
+              "alpha": 1
+            },
+            {
+              "commonName": "Label",
+              "alignV": "CENTER",
+              "alignH": "CENTER",
+              "fontSize": 25,
+              "fontColor": "$COLOR_WHITE",
+              "styles": [
+                "TF_MATCH_REVEAL_TEAM_NAME"
+              ],
+              "text": "v"
+            },
+            {
+              "commonName": "GenericButton",
+              "alignV": "CENTER",
+              "clickAction": "act_v"
+            }
+          ]
+        },
+        {
+          "commonName": "Panel",
+          "name": "UIFrame",
+          "alignV": "CENTER",
+          "alignH": "CENTER",
+          "marginTop": 30,
+          "marginLeft": 50,
+          "width": 50,
+          "height": 50,
+          "children": [
+            {
+              "commonName": "Rectangle",
+              "alignV": "FILL",
+              "alignH": "FILL",
+              "cornerRaduis": 15,
+              "color": "0x1C1C1C",
+              "alpha": 1
+            },
+            {
+              "commonName": "Label",
+              "alignV": "CENTER",
+              "alignH": "CENTER",
+              "fontSize": 25,
+              "fontColor": "$COLOR_WHITE",
+              "styles": [
+                "TF_MATCH_REVEAL_TEAM_NAME"
+              ],
+              "text": "b"
+            },
+            {
+              "commonName": "GenericButton",
+              "alignV": "CENTER",
+              "clickAction": "act_b"
+            }
+          ]
+        },
+        {
+          "commonName": "Panel",
+          "name": "UIFrame",
+          "alignV": "CENTER",
+          "alignH": "CENTER",
+          "marginTop": 30,
+          "marginLeft": 110,
+          "width": 50,
+          "height": 50,
+          "children": [
+            {
+              "commonName": "Rectangle",
+              "alignV": "FILL",
+              "alignH": "FILL",
+              "cornerRaduis": 15,
+              "color": "0x1C1C1C",
+              "alpha": 1
+            },
+            {
+              "commonName": "Label",
+              "alignV": "CENTER",
+              "alignH": "CENTER",
+              "fontSize": 25,
+              "fontColor": "$COLOR_WHITE",
+              "styles": [
+                "TF_MATCH_REVEAL_TEAM_NAME"
+              ],
+              "text": "n"
+            },
+            {
+              "commonName": "GenericButton",
+              "alignV": "CENTER",
+              "clickAction": "act_n"
+            }
+          ]
+        },
+        {
+          "commonName": "Panel",
+          "name": "UIFrame",
+          "alignV": "CENTER",
+          "alignH": "CENTER",
+          "marginTop": 30,
+          "marginLeft": 170,
+          "width": 50,
+          "height": 50,
+          "children": [
+            {
+              "commonName": "Rectangle",
+              "alignV": "FILL",
+              "alignH": "FILL",
+              "cornerRaduis": 15,
+              "color": "0x1C1C1C",
+              "alpha": 1
+            },
+            {
+              "commonName": "Label",
+              "alignV": "CENTER",
+              "alignH": "CENTER",
+              "fontSize": 25,
+              "fontColor": "$COLOR_WHITE",
+              "styles": [
+                "TF_MATCH_REVEAL_TEAM_NAME"
+              ],
+              "text": "m"
+            },
+            {
+              "commonName": "GenericButton",
+              "alignV": "CENTER",
+              "clickAction": "act_m"
+            }
+          ]
+        },
+        {
+          "commonName": "Panel",
+          "name": "UIFrame",
+          "alignV": "CENTER",
+          "alignH": "CENTER",
+          "marginTop": 105,
+          "marginLeft": 0,
+          "width": 480,
+          "height": 50,
+          "children": [
+            {
+              "commonName": "Rectangle",
+              "alignV": "FILL",
+              "alignH": "FILL",
+              "cornerRaduis": 15,
+              "color": "0x1C1C1C",
+              "alpha": 1
+            },
+            {
+              "commonName": "Label",
+              "alignV": "CENTER",
+              "alignH": "CENTER",
+              "fontSize": 25,
+              "fontColor": "$COLOR_WHITE",
+              "styles": [
+                "TF_MATCH_REVEAL_TEAM_NAME"
+              ],
+              "text": ""
+            },
+            {
+              "commonName": "GenericButton",
+              "alignV": "CENTER",
+              "clickAction": ""
+            }
+          ]
+        },
+        {
+          "commonName": "Panel",
+          "name": "UIFrame",
+          "alignV": "CENTER",
+          "alignH": "CENTER",
+          "marginTop": 105,
+          "marginLeft": 0,
+          "width": 200,
+          "height": 50,
+          "children": [
+            {
+              "commonName": "Rectangle",
+              "alignV": "FILL",
+              "alignH": "FILL",
+              "cornerRaduis": 15,
+              "color": "0xffffff",
+              "alpha": 0
+            },
+            {
+              "commonName": "Label",
+              "alignV": "CENTER",
+              "alignH": "CENTER",
+              "fontSize": 25,
+              "fontColor": "$COLOR_WHITE",
+              "styles": [
+                "TF_MATCH_REVEAL_TEAM_NAME"
+              ],
+              "text": ""
+            },
+            {
+              "commonName": "GenericButton",
+              "alignV": "CENTER",
+              "clickAction": "act_dot"
+            }
+          ]
+        },
+        {
+          "commonName": "Panel",
+          "name": "UIFrame",
+          "alignV": "CENTER",
+          "alignH": "CENTER",
+          "marginTop": 105,
+          "marginLeft": 280,
+          "width": 50,
+          "height": 50,
+          "children": [
+            {
+              "commonName": "Rectangle",
+              "alignV": "FILL",
+              "alignH": "FILL",
+              "cornerRaduis": 15,
+              "color": "0x1C1C1C",
+              "alpha": 1
+            },
+            {
+              "commonName": "Label",
+              "alignV": "CENTER",
+              "alignH": "CENTER",
+              "fontSize": 18,
+              "fontColor": "$COLOR_WHITE",
+              "styles": [
+                "TF_MATCH_REVEAL_TEAM_NAME"
+              ],
+              "text": "<"
+            },
+            {
+              "commonName": "GenericButton",
+              "alignV": "CENTER",
+              "clickAction": "act_backspace"
+            }
+          ]
+        },
+        {
+          "commonName": "Panel",
+          "name": "UIFrame",
+          "alignV": "CENTER",
+          "alignH": "CENTER",
+          "marginTop": 260,
+          "marginLeft": -50,
+          "width": 550,
+          "height": 100,
+          "children": [
+            {
+              "commonName": "GenericButton",
+              "alignH": "LEFT",
+              "alignV": "BOTTOM",
+              "marginBottom": 0,
+              "marginLeft": -356,
+              "scaleX": 0.6,
+              "scaleY": 0.6,
+              "icon": "$SimMatchIcon2",
+              "clickAction": "act_submit"
+            },
+            {
+              "commonName": "Label",
+              "alignV": "BOTTOM",
+              "alignH": "LEFT",
+              "marginBottom": 0,
+              "marginLeft": -300,
+              "fontSize": 14,
+              "fontColor": "$COLOR_LIGHT_GRAY",
+              "styles": [
+                "TF_MATCH_REVEAL_TEAM_NAME"
+              ],
+              "text": "Back"
+            }
+          ]
+        },
+        {
+          "commonName": "Panel",
+          "name": "UIFrame",
+          "alignV": "CENTER",
+          "alignH": "CENTER",
+          "marginTop": 260,
+          "marginLeft": -50,
+          "width": 550,
+          "height": 100,
+          "children": [
+            {
+              "commonName": "GenericButton",
+              "alignH": "LEFT",
+              "alignV": "BOTTOM",
+              "marginBottom": 0,
+              "marginLeft": 870,
+              "scaleX": 0.6,
+              "scaleY": 0.6,
+              "icon": "$SimMatchIcon1",
+              "clickAction": "act_submit"
+            },
+            {
+              "commonName": "Label",
+              "alignV": "BOTTOM",
+              "alignH": "LEFT",
+              "marginBottom": 0,
+              "marginLeft": 926,
+              "fontSize": 14,
+              "fontColor": "$COLOR_LIGHT_GRAY",
+              "styles": [
+                "TF_MATCH_REVEAL_TEAM_NAME"
+              ],
+              "text": "Submit"
+            }
+          ]
+        },
+        {
+          "commonName": "Panel",
+          "name": "UIFrame",
+          "alignV": "CENTER",
+          "alignH": "CENTER",
+          "marginTop": -230,
+          "marginLeft": 0,
+          "width": 600,
+          "height": 60,
+          "children": [
+            {
+              "commonName": "Rectangle",
+              "alignV": "FILL",
+              "alignH": "FILL",
+              "cornerRaduis": 15,
+              "color": "0xFFFFFF",
+              "alpha": 0.13
+            },
+            {
+              "commonName": "Label",
+              "alignV": "BOTTOM",
+              "alignH": "LEFT",
+              "marginBottom": 10,
+              "marginLeft": 10,
+              "fontSize": 31,
+              "fontFace": "$CruyffSans-Regular",
+              "fontColor": "$COLOR_WHITE",
+              "bold": false,
+              "bindings": [
+                {
+                  "binding": "bnd_matchday_label",
+                  "property": "text"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
